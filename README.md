@@ -19,15 +19,23 @@ Go CLI to back up and restore Kafka SCRAM users and ACLs, storing backups in OCI
 go build -o kguard .
 ```
 
-Or download the latest Linux binary from GitHub Releases:
+Or download the latest binary from GitHub Releases:
 
 ```bash
-# x64 / amd64
+# Linux x64 / amd64
 wget -O kguard https://github.com/<owner>/kguard/releases/latest/download/kguard-linux-x64
 chmod +x kguard
 
-# arm64
+# Linux arm64
 wget -O kguard https://github.com/<owner>/kguard/releases/latest/download/kguard-linux-arm64
+chmod +x kguard
+
+# macOS Apple Silicon / arm64
+wget -O kguard https://github.com/<owner>/kguard/releases/latest/download/kguard-darwin-arm64
+chmod +x kguard
+
+# macOS Intel / x64
+wget -O kguard https://github.com/<owner>/kguard/releases/latest/download/kguard-darwin-x64
 chmod +x kguard
 ```
 
@@ -66,6 +74,8 @@ The release workflow builds and uploads:
 ```text
 kguard-linux-x64
 kguard-linux-arm64
+kguard-darwin-x64
+kguard-darwin-arm64
 checksums.txt
 ```
 
@@ -76,6 +86,8 @@ wget -O kguard https://github.com/<owner>/kguard/releases/latest/download/kguard
 chmod +x kguard
 ./kguard --help
 ```
+
+Use the binary that matches both the operating system and CPU architecture. For example, Apple Silicon Macs use `kguard-darwin-arm64`, not `kguard-linux-arm64`.
 
 Replace `<owner>` with the GitHub user or organization that owns the repository.
 

@@ -26,16 +26,18 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Build Linux binaries
+      - name: Build binaries
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/kguard-linux-x64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/kguard-linux-arm64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/kguard-darwin-x64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/kguard-darwin-arm64 .
 
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum kguard-linux-* > checksums.txt
+          sha256sum kguard-* > checksums.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -43,4 +45,6 @@ jobs:
           files: |
             dist/kguard-linux-x64
             dist/kguard-linux-arm64
+            dist/kguard-darwin-x64
+            dist/kguard-darwin-arm64
             dist/checksums.txt
