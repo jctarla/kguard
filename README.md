@@ -2,6 +2,53 @@
 
 Go CLI to back up and restore Kafka SCRAM users and ACLs, storing backups in OCI Object Storage.
 
+## TL;DR
+
+Download the binary that matches your operating system and CPU architecture:
+
+```bash
+# Linux x64 / amd64
+wget -O kguard https://github.com/jctarla/kguard/releases/latest/download/kguard-linux-x64
+chmod +x kguard
+
+# Linux arm64
+wget -O kguard https://github.com/jctarla/kguard/releases/latest/download/kguard-linux-arm64
+chmod +x kguard
+
+# macOS Apple Silicon / arm64
+wget -O kguard https://github.com/jctarla/kguard/releases/latest/download/kguard-darwin-arm64
+chmod +x kguard
+
+# macOS Intel / x64
+wget -O kguard https://github.com/jctarla/kguard/releases/latest/download/kguard-darwin-x64
+chmod +x kguard
+```
+
+Configure backup and restore:
+
+```bash
+./kguard config backup setup
+./kguard config restore setup
+```
+
+Run backup:
+
+```bash
+./kguard backup
+```
+
+Validate a restore before applying it:
+
+```bash
+./kguard restore --validate
+```
+
+Run restore:
+
+```bash
+./kguard restore
+```
+
 ## Requirements
 
 - Go installed.
