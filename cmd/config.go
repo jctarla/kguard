@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,62 +17,116 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	configModeSource = "source"
-	configModeTarget = "target"
-)
+var selectedProfile string
 
-var runtimeConfigMode string
+var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func init() {
-	rootCmd.AddCommand(configCmd)
-	configCmd.AddCommand(newModeConfigCommand(configModeSource))
-	configCmd.AddCommand(newModeConfigCommand(configModeTarget))
+	rootCmd.PersistentFlags().StringVar(&selectedProfile, "profile", "", "kguard configuration profile name")
+	rootCmd.AddCommand(profileCmd)
+	profileCmd.AddCommand(profileCreateCmd)
+	profileCmd.AddCommand(profileShowCmd)
+	profileCmd.AddCommand(profileListCmd)
+	profileCmd.AddCommand(profileDeleteCmd)
 }
 
-var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage kguard configuration",
-	Long: `Manage kguard configuration files.
+var profileCmd = &cobra.Command{
+	Use:           "profile",
+	Short:         "Manage kguard configuration profiles",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Long: `Manage kguard configuration profiles.
 
-Configuration is stored per operation:
-  - source: ~/.kguard/source
-  - target: ~/.kguard/target`,
+Configuration profiles are stored in:
+  ~/.kguard/profiles/<profile>
+
+Examples:
+  kguard profile create my-profile-dev
+  kguard profile show my-profile-dev
+  kguard profile list
+  kguard profile delete my-profile-dev`,
+	Run: func(cmd *cobra.Command, args []string) {
+		_ = cmd.Help()
+	},
 }
 
-func newModeConfigCommand(mode string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:           mode,
-		Short:         fmt.Sprintf("Manage %s configuration", mode),
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Run: func(cmd *cobra.Command, args []string) {
-			_ = cmd.Help()
-		},
-	}
-	cmd.AddCommand(&cobra.Command{
-		Use:           "setup",
-		Short:         fmt.Sprintf("Create or update ~/.kguard/%s", mode),
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfigWizard(mode)
-		},
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:           "show",
-		Short:         fmt.Sprintf("Show ~/.kguard/%s", mode),
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return showConfig(mode)
-		},
-	})
-	return cmd
+var profileCreateCmd = &cobra.Command{
+	Use:           "create <profile>",
+	Short:         "Create or update a kguard configuration profile",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("use `kguard profile create <profile>`")
+		}
+		if err := validateProfileName(args[0]); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runConfigWizard(args[0])
+	},
 }
 
-func runConfigWizard(mode string) error {
-	path, err := configFilePath(mode)
+var profileShowCmd = &cobra.Command{
+	Use:           "show <profile>",
+	Short:         "Show a kguard configuration profile",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("use `kguard profile show <profile>`")
+		}
+		if err := validateProfileName(args[0]); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return showConfig(args[0])
+	},
+}
+
+var profileListCmd = &cobra.Command{
+	Use:           "list",
+	Short:         "List kguard configuration profiles",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		profiles, err := listProfiles()
+		if err != nil {
+			return err
+		}
+		if len(profiles) == 0 {
+			fmt.Println("No configuration profiles found.")
+			return nil
+		}
+		for _, profile := range profiles {
+			fmt.Println(profile)
+		}
+		return nil
+	},
+}
+
+var profileDeleteCmd = &cobra.Command{
+	Use:           "delete <profile>",
+	Short:         "Delete a kguard configuration profile",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("use `kguard profile delete <profile>`")
+		}
+		return validateProfileName(args[0])
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return deleteProfile(args[0])
+	},
+}
+
+func runConfigWizard(profile string) error {
+	path, err := configFilePath(profile)
 	if err != nil {
 		return err
 	}
@@ -87,47 +143,49 @@ func runConfigWizard(mode string) error {
 		return err
 	}
 	values := map[string]string{}
-	values[envKey(mode, "BOOTSTRAP_SERVERS")], err = ask("Kafka bootstrap servers", "broker1:9093,broker2:9093", false)
+	values["BOOTSTRAP_SERVERS"], err = ask("Kafka bootstrap servers", "broker1:9093,broker2:9093", false)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "KAFKA_USER")], err = ask("Kafka admin user", "", false)
+	values["KAFKA_USER"], err = ask("Kafka admin user", "", false)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "KAFKA_PASSWORD")], err = ask("Kafka admin password", "", true)
+	values["KAFKA_PASSWORD"], err = ask("Kafka admin password", "", true)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "NAMESPACE")], err = ask("OCI Object Storage namespace", "", false)
+	values["NAMESPACE"], err = ask("OCI Object Storage namespace", "", false)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "BUCKET")], err = ask("OCI Object Storage bucket", "", false)
+	values["BUCKET"], err = ask("OCI Object Storage bucket", "", false)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "PREFIX")], err = ask("OCI Object Storage prefix", "kafka-acl-backups", false)
+	values["REGION"], err = ask("OCI region", "sa-saopaulo-1", false)
 	if err != nil {
 		return err
 	}
-	values[envKey(mode, "REGION")], err = ask("OCI region", "sa-saopaulo-1", false)
+	values["OBJECT_NAME"] = ""
+	values["VAULT_OCID"], err = ask("OCI Vault OCID", "", false)
 	if err != nil {
 		return err
 	}
-	if mode == configModeTarget {
-		values[envKey(mode, "VAULT_OCID")], err = ask("OCI Vault OCID", "", false)
-		if err != nil {
-			return err
-		}
-		values[envKey(mode, "COMPARTMENT_OCID")], err = ask("OCI Compartment OCID", "", false)
-		if err != nil {
-			return err
-		}
+	values["COMPARTMENT_OCID"], err = ask("OCI Compartment OCID", "", false)
+	if err != nil {
+		return err
 	}
-	values[envKey(mode, "TIMEOUT")] = "60s"
-	values[envKey(mode, "OCI_PROFILE")] = "DEFAULT"
-	path, err = writeConfigFile(mode, values)
+	values["TIMEOUT"] = "60s"
+	values["OCI_PROFILE"], err = ask("OCI config profile", "DEFAULT", false)
+	if err != nil {
+		return err
+	}
+	values["OCI_CONFIG"], err = askOptional("Alternative OCI config file path", "")
+	if err != nil {
+		return err
+	}
+	path, err = writeConfigFile(profile, values)
 	if err != nil {
 		return err
 	}
@@ -135,16 +193,15 @@ func runConfigWizard(mode string) error {
 	return nil
 }
 
-func showConfig(mode string) error {
-	values, exists, err := readConfigFile(mode)
+func showConfig(profile string) error {
+	values, exists, err := readConfigFile(profile)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("configuration file not found; run `kguard config %s setup`", mode)
+		return fmt.Errorf("configuration profile %q not found; run `kguard profile create %s`", profile, profile)
 	}
-	keys := configKeys(mode)
-	for _, key := range keys {
+	for _, key := range configKeys() {
 		value := values[key]
 		if strings.Contains(key, "PASSWORD") && value != "" {
 			value = "*****"
@@ -174,89 +231,74 @@ func confirmOverwriteConfig(path string) (bool, error) {
 	return strings.ToLower(strings.TrimSpace(answer)) == "y", nil
 }
 
-func activeConfigMode() string {
-	if runtimeConfigMode != "" {
-		return runtimeConfigMode
+func selectedConfigProfile() (string, error) {
+	profile := strings.TrimSpace(selectedProfile)
+	if profile == "" {
+		return "", fmt.Errorf("provide --profile or create one with `kguard profile create <profile>`")
 	}
-	return configModeSource
+	if err := validateProfileName(profile); err != nil {
+		return "", err
+	}
+	return profile, nil
 }
 
-func applyConfigDefaults(mode string) (bool, error) {
-	fileValues, fileExists, err := readConfigFile(mode)
+func applyConfigDefaults(profile string) (bool, error) {
+	fileValues, fileExists, err := readConfigFile(profile)
 	if err != nil {
 		return false, err
 	}
-	hasEnv := hasModeEnv(mode)
-	hasFlags := hasConfigFlags()
-	applyConfigValues(mode, fileValues)
-	if err := applyModeEnv(mode); err != nil {
-		return false, err
-	}
+	applyConfigValues(fileValues)
 	bs, _ := rootCmd.PersistentFlags().GetString("bootstrap-servers")
 	kafkaFlags.BootstrapServers = appconfig.SplitCSV(bs)
-	return fileExists || hasEnv || hasFlags, nil
+	return fileExists, nil
 }
 
-func applyConfigValues(mode string, values map[string]string) {
-	setFlagFromMap("bootstrap-servers", values, envKey(mode, "BOOTSTRAP_SERVERS"))
-	setStringVarFromMap(&kafkaFlags.Username, "kafka-user", values, envKey(mode, "KAFKA_USER"))
-	setStringVarFromMap(&kafkaFlags.Password, "kafka-password", values, envKey(mode, "KAFKA_PASSWORD"))
-	setDurationVarFromMap(&kafkaFlags.Timeout, "timeout", values, envKey(mode, "TIMEOUT"))
-	setStringVarFromMap(&ociFlags.Namespace, "namespace", values, envKey(mode, "NAMESPACE"))
-	setStringVarFromMap(&ociFlags.Bucket, "bucket", values, envKey(mode, "BUCKET"))
-	setStringVarFromMap(&ociFlags.Prefix, "prefix", values, envKey(mode, "PREFIX"))
-	setStringVarFromMap(&ociFlags.Region, "region", values, envKey(mode, "REGION"))
-	setStringVarFromMap(&ociFlags.CompartmentID, "compartment-ocid", values, envKey(mode, "COMPARTMENT_OCID"))
-	setStringVarFromMap(&ociFlags.VaultID, "vault-ocid", values, envKey(mode, "VAULT_OCID"))
-	setStringVarFromMap(&ociFlags.Profile, "oci-profile", values, envKey(mode, "OCI_PROFILE"))
-	setStringVarFromMap(&ociFlags.ConfigPath, "oci-config", values, envKey(mode, "OCI_CONFIG"))
+func applyConfigValues(values map[string]string) {
+	setFlagFromMap("bootstrap-servers", values, "BOOTSTRAP_SERVERS")
+	setStringVarFromMap(&kafkaFlags.Username, "kafka-user", values, "KAFKA_USER")
+	setStringVarFromMap(&kafkaFlags.Password, "kafka-password", values, "KAFKA_PASSWORD")
+	setDurationVarFromMap(&kafkaFlags.Timeout, "timeout", values, "TIMEOUT")
+	setStringVarFromMap(&ociFlags.Namespace, "namespace", values, "NAMESPACE")
+	setStringVarFromMap(&ociFlags.Bucket, "bucket", values, "BUCKET")
+	setStringVarFromMap(&ociFlags.Region, "region", values, "REGION")
+	setStringVarFromMap(&ociFlags.CompartmentID, "compartment-ocid", values, "COMPARTMENT_OCID")
+	setStringVarFromMap(&ociFlags.VaultID, "vault-ocid", values, "VAULT_OCID")
+	setStringVarFromMap(&ociFlags.Profile, "oci-profile", values, "OCI_PROFILE")
+	setStringVarFromMap(&ociFlags.ConfigPath, "oci-config", values, "OCI_CONFIG")
 }
 
-func applyModeEnv(mode string) error {
-	setFlagFromEnv("bootstrap-servers", envKey(mode, "BOOTSTRAP_SERVERS"))
-	setStringVarFromEnv(&kafkaFlags.Username, "kafka-user", envKey(mode, "KAFKA_USER"))
-	setStringVarFromEnv(&kafkaFlags.Password, "kafka-password", envKey(mode, "KAFKA_PASSWORD"))
-	if err := setDurationVarFromEnv(&kafkaFlags.Timeout, "timeout", envKey(mode, "TIMEOUT")); err != nil {
+func applyProfileObjectName(profile string, flagChanged bool, target *string) error {
+	if flagChanged || *target != "" {
+		return nil
+	}
+	values, exists, err := readConfigFile(profile)
+	if err != nil {
 		return err
 	}
-	setStringVarFromEnv(&ociFlags.Namespace, "namespace", envKey(mode, "NAMESPACE"))
-	setStringVarFromEnv(&ociFlags.Bucket, "bucket", envKey(mode, "BUCKET"))
-	setStringVarFromEnv(&ociFlags.Prefix, "prefix", envKey(mode, "PREFIX"))
-	setStringVarFromEnv(&ociFlags.Region, "region", envKey(mode, "REGION"))
-	setStringVarFromEnv(&ociFlags.CompartmentID, "compartment-ocid", envKey(mode, "COMPARTMENT_OCID"))
-	setStringVarFromEnv(&ociFlags.VaultID, "vault-ocid", envKey(mode, "VAULT_OCID"))
-	setStringVarFromEnv(&ociFlags.Profile, "oci-profile", envKey(mode, "OCI_PROFILE"))
-	setStringVarFromEnv(&ociFlags.ConfigPath, "oci-config", envKey(mode, "OCI_CONFIG"))
+	if !exists {
+		return nil
+	}
+	*target = values["OBJECT_NAME"]
 	return nil
 }
 
-func validateVaultConfig() error {
+func validateVaultConfig(profile string) error {
 	if strings.TrimSpace(ociFlags.VaultID) == "" {
-		return fmt.Errorf("provide the Vault OCID or run `kguard config %s setup`", activeConfigMode())
+		return fmt.Errorf("provide the Vault OCID or run `kguard profile create %s`", profile)
 	}
 	if strings.TrimSpace(ociFlags.CompartmentID) == "" {
-		return fmt.Errorf("provide the compartment OCID or run `kguard config %s setup`", activeConfigMode())
+		return fmt.Errorf("provide the compartment OCID or run `kguard profile create %s`", profile)
 	}
 	return nil
 }
 
-func missingConfigError(mode string) error {
-	return fmt.Errorf("no %s configuration found; run `kguard config %s setup`, set %s_* environment variables, or pass flags", mode, mode, envPrefix(mode))
+func missingConfigError(profile string) error {
+	return fmt.Errorf("configuration profile %q not found; run `kguard profile create %s`", profile, profile)
 }
 
 func hasConfigFlags() bool {
-	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "prefix", "region", "compartment-ocid", "vault-ocid", "oci-profile", "oci-config", "timeout"} {
+	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "region", "compartment-ocid", "vault-ocid", "oci-profile", "oci-config", "timeout"} {
 		if rootCmd.PersistentFlags().Changed(name) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasModeEnv(mode string) bool {
-	prefix := envPrefix(mode) + "_"
-	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, prefix) {
 			return true
 		}
 	}
@@ -292,40 +334,6 @@ func setDurationVarFromMap(target *time.Duration, flagName string, values map[st
 	}
 }
 
-func setFlagFromEnv(flagName, envName string) {
-	if rootCmd.PersistentFlags().Changed(flagName) {
-		return
-	}
-	if value := os.Getenv(envName); value != "" {
-		_ = rootCmd.PersistentFlags().Set(flagName, value)
-	}
-}
-
-func setStringVarFromEnv(target *string, flagName, envName string) {
-	if rootCmd.PersistentFlags().Changed(flagName) {
-		return
-	}
-	if value := os.Getenv(envName); value != "" {
-		*target = value
-	}
-}
-
-func setDurationVarFromEnv(target *time.Duration, flagName, envName string) error {
-	if rootCmd.PersistentFlags().Changed(flagName) {
-		return nil
-	}
-	value := os.Getenv(envName)
-	if value == "" {
-		return nil
-	}
-	duration, err := parseDuration(value)
-	if err != nil {
-		return fmt.Errorf("%s is invalid: use a Go duration like 60s or 2m, or a number of seconds", envName)
-	}
-	*target = duration
-	return nil
-}
-
 func parseDuration(value string) (time.Duration, error) {
 	duration, err := time.ParseDuration(value)
 	if err != nil {
@@ -341,16 +349,27 @@ func parseDuration(value string) (time.Duration, error) {
 	return duration, nil
 }
 
-func configFilePath(mode string) (string, error) {
+func configDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".kguard", mode), nil
+	return filepath.Join(home, ".kguard", "profiles"), nil
 }
 
-func writeConfigFile(mode string, values map[string]string) (string, error) {
-	path, err := configFilePath(mode)
+func configFilePath(profile string) (string, error) {
+	if err := validateProfileName(profile); err != nil {
+		return "", err
+	}
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, profile), nil
+}
+
+func writeConfigFile(profile string, values map[string]string) (string, error) {
+	path, err := configFilePath(profile)
 	if err != nil {
 		return "", err
 	}
@@ -362,7 +381,7 @@ func writeConfigFile(mode string, values map[string]string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-	for _, key := range configKeys(mode) {
+	for _, key := range configKeys() {
 		if _, err := fmt.Fprintf(file, "%s=%s\n", key, strconv.Quote(values[key])); err != nil {
 			return "", err
 		}
@@ -370,8 +389,8 @@ func writeConfigFile(mode string, values map[string]string) (string, error) {
 	return path, nil
 }
 
-func readConfigFile(mode string) (map[string]string, bool, error) {
-	path, err := configFilePath(mode)
+func readConfigFile(profile string) (map[string]string, bool, error) {
+	path, err := configFilePath(profile)
 	if err != nil {
 		return nil, false, err
 	}
@@ -407,31 +426,74 @@ func readConfigFile(mode string) (map[string]string, bool, error) {
 	return values, true, nil
 }
 
-func envPrefix(mode string) string {
-	switch mode {
-	case configModeTarget:
-		return "KGUARD_TARGET"
-	default:
-		return "KGUARD_SOURCE"
+func listProfiles() ([]string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return nil, err
 	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	profiles := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if validateProfileName(name) == nil {
+			profiles = append(profiles, name)
+		}
+	}
+	sort.Strings(profiles)
+	return profiles, nil
 }
 
-func envKey(mode, suffix string) string {
-	return envPrefix(mode) + "_" + suffix
+func deleteProfile(profile string) error {
+	path, err := configFilePath(profile)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("configuration profile %q not found", profile)
+		}
+		return err
+	}
+	fmt.Printf("Configuration profile deleted: %s\n", profile)
+	return nil
 }
 
-func configKeys(mode string) []string {
-	keys := []string{
-		envKey(mode, "BOOTSTRAP_SERVERS"),
-		envKey(mode, "KAFKA_USER"),
-		envKey(mode, "KAFKA_PASSWORD"),
-		envKey(mode, "NAMESPACE"),
-		envKey(mode, "BUCKET"),
-		envKey(mode, "PREFIX"),
-		envKey(mode, "REGION"),
+func validateProfileName(profile string) error {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return fmt.Errorf("profile name is required")
 	}
-	if mode == configModeTarget {
-		keys = append(keys, envKey(mode, "VAULT_OCID"), envKey(mode, "COMPARTMENT_OCID"))
+	if profile == "list" || profile == "delete" {
+		return fmt.Errorf("%q is reserved and cannot be used as a profile name", profile)
 	}
-	return append(keys, envKey(mode, "TIMEOUT"), envKey(mode, "OCI_PROFILE"), envKey(mode, "OCI_CONFIG"))
+	if !profileNamePattern.MatchString(profile) {
+		return fmt.Errorf("invalid profile name %q: use letters, numbers, dots, underscores, or hyphens", profile)
+	}
+	return nil
+}
+
+func configKeys() []string {
+	return []string{
+		"BOOTSTRAP_SERVERS",
+		"KAFKA_USER",
+		"KAFKA_PASSWORD",
+		"NAMESPACE",
+		"BUCKET",
+		"REGION",
+		"OBJECT_NAME",
+		"VAULT_OCID",
+		"COMPARTMENT_OCID",
+		"TIMEOUT",
+		"OCI_PROFILE",
+		"OCI_CONFIG",
+	}
 }

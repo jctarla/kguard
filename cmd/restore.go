@@ -24,13 +24,15 @@ type restoreValidationResult struct {
 }
 
 var restoreCmd = &cobra.Command{
-	Use:   "restore",
-	Short: "Restore SCRAM users and ACLs from an OCI Object Storage backup",
+	Use:           "restore",
+	Short:         "Restore SCRAM users and ACLs from an OCI Object Storage backup",
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		interactive, _ := cmd.Flags().GetBool("interactive")
-		runtimeConfigMode = configModeTarget
-		if !cmd.Flags().Changed("object-name") && restoreObjectName == "" {
-			restoreObjectName = getenv(envKey(configModeTarget, "OBJECT_NAME"))
+		profile, err := selectedConfigProfile()
+		if err != nil {
+			return err
 		}
 		if restoreValidateOnly {
 			if err := hydrateOCIOnly(interactive); err != nil {
@@ -40,12 +42,17 @@ var restoreCmd = &cobra.Command{
 			if err := hydrateCommon(interactive); err != nil {
 				return err
 			}
+			if err := validateVaultConfig(profile); err != nil {
+				return err
+			}
+		}
+		if err := applyProfileObjectName(profile, cmd.Flags().Changed("object-name"), &restoreObjectName); err != nil {
+			return err
 		}
 		printBanner()
 		if restoreObjectName == "" && !interactive {
 			return fmt.Errorf("provide --object-name to restore or use interactive mode to choose a backup")
 		}
-		cmd.SilenceUsage = true
 		oci, err := ociclient.NewClient(ociFlags)
 		if err != nil {
 			return err
@@ -98,7 +105,7 @@ var restoreCmd = &cobra.Command{
 }
 
 func init() {
-	restoreCmd.Flags().StringVar(&restoreObjectName, "object-name", "", "Backup JSON file name. The configured --prefix is applied automatically unless this already includes it")
+	restoreCmd.Flags().StringVar(&restoreObjectName, "object-name", "", "Backup JSON file name. The selected profile name is used as the Object Storage prefix")
 	restoreCmd.Flags().BoolVar(&restoreValidateOnly, "validate", false, "Validate that all backup users have Vault passwords without executing restore")
 	restoreCmd.Flags().Bool("interactive", true, "Prompt for missing required values and confirmation")
 	rootCmd.AddCommand(restoreCmd)
@@ -128,7 +135,7 @@ func selectBackupObject(ctx context.Context, client *ociclient.Client) (string, 
 		return "", err
 	}
 	if len(backups) == 0 {
-		return "", fmt.Errorf("no JSON backups found in the configured prefix")
+		return "", fmt.Errorf("no JSON backups found in the selected profile prefix")
 	}
 	templates := &promptui.SelectTemplates{
 		Label:    "{{ . }}",

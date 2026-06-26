@@ -19,9 +19,10 @@ var (
 const appVersion = "1.0"
 
 var rootCmd = &cobra.Command{
-	Use:     "kguard",
-	Short:   "Back up and restore Kafka SCRAM users and ACLs to OCI Object Storage",
-	Version: appVersion,
+	Use:           "kguard",
+	Short:         "Back up and restore Kafka SCRAM users and ACLs to OCI Object Storage",
+	Version:       appVersion,
+	SilenceErrors: true,
 	Long: `Interactive CLI to protect Kafka SCRAM users and ACLs.
 
 Backup:
@@ -51,7 +52,6 @@ func init() {
 	rootCmd.PersistentFlags().DurationVar(&kafkaFlags.Timeout, "timeout", 60*time.Second, "Kafka/OCI operation timeout")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Namespace, "namespace", "", "OCI Object Storage namespace")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Bucket, "bucket", "", "OCI Object Storage bucket")
-	rootCmd.PersistentFlags().StringVar(&ociFlags.Prefix, "prefix", "kafka-acl-backups", "Object Storage prefix/folder")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Region, "region", "", "OCI region override. Example: sa-saopaulo-1")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.CompartmentID, "compartment-ocid", "", "Compartment OCID used to list Vault secrets during restore")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.VaultID, "vault-ocid", "", "Vault OCID where Kafka user passwords are stored")
@@ -74,13 +74,16 @@ kguard v%s - OCI-native Kafka access backup and restore with Vault and Object St
 
 func hydrateCommon(interactive bool) error {
 	_ = interactive
-	mode := activeConfigMode()
-	hasSource, err := applyConfigDefaults(mode)
+	profile, err := selectedConfigProfile()
+	if err != nil {
+		return err
+	}
+	hasSource, err := applyConfigDefaults(profile)
 	if err != nil {
 		return err
 	}
 	if !hasSource {
-		return missingConfigError(mode)
+		return missingConfigError(profile)
 	}
 	if err := config.ValidateKafka(kafkaFlags); err != nil {
 		return err
@@ -88,25 +91,28 @@ func hydrateCommon(interactive bool) error {
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err
 	}
-	if activeConfigMode() == configModeTarget {
-		return validateVaultConfig()
-	}
+	ociFlags.Prefix = profile
 	return nil
 }
 
 func hydrateOCIOnly(interactive bool) error {
 	_ = interactive
-	hasSource, err := applyConfigDefaults(configModeTarget)
+	profile, err := selectedConfigProfile()
+	if err != nil {
+		return err
+	}
+	hasSource, err := applyConfigDefaults(profile)
 	if err != nil {
 		return err
 	}
 	if !hasSource {
-		return missingConfigError(configModeTarget)
+		return missingConfigError(profile)
 	}
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err
 	}
-	return validateVaultConfig()
+	ociFlags.Prefix = profile
+	return validateVaultConfig(profile)
 }
 
 func ask(label, def string, secret bool) (string, error) {
@@ -115,6 +121,11 @@ func ask(label, def string, secret bool) (string, error) {
 		p.HideEntered = true
 		p.Mask = '*'
 	}
+	return p.Run()
+}
+
+func askOptional(label, def string) (string, error) {
+	p := promptui.Prompt{Label: label, Default: def, AllowEdit: true}
 	return p.Run()
 }
 

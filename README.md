@@ -35,26 +35,25 @@ chmod +x kguard
 Configure backup and restore:
 
 ```bash
-./kguard config source setup
-./kguard config target setup
+./kguard profile create my-profile-dev
 ```
 
 Run backup:
 
 ```bash
-./kguard backup
+./kguard backup --profile my-profile-dev
 ```
 
 Validate a restore before applying it:
 
 ```bash
-./kguard restore --validate
+./kguard restore --profile my-profile-dev --validate
 ```
 
 Run restore:
 
 ```bash
-./kguard restore
+./kguard restore --profile my-profile-dev
 ```
 
 ## Requirements
@@ -150,75 +149,73 @@ Replace `<owner>` with the GitHub user or organization that owns the repository.
 
 ```bash
 ./kguard --help
-./kguard config --help
+./kguard profile --help
 ./kguard backup --help
 ./kguard restore --help
 ```
 
-## Configure kguard
+## Configure profiles
 
-kguard can store per-operation configuration files in the user's home directory:
+kguard stores named configuration profiles in the user's home directory. A profile contains all values needed by both backup and restore operations.
 
 ```bash
-./kguard config source setup
-./kguard config target setup
+./kguard profile create my-profile-dev
 ```
 
-You can inspect current configuration with:
+You can inspect, list, or delete profiles with:
 
 ```bash
-./kguard config source show
-./kguard config target show
+./kguard profile show my-profile-dev
+./kguard profile list
+./kguard profile delete my-profile-dev
 ```
 
 `show` masks password values as `*****`.
 
-If a configuration file already exists, `setup` asks whether to overwrite it before changing anything.
+If a configuration file already exists, `profile create` asks whether to overwrite it before changing anything.
 
-`config source setup` prompts for:
+`profile create <profile>` prompts for:
 
 - Kafka bootstrap servers
 - Kafka admin user
 - Kafka admin password
 - OCI Object Storage namespace
 - OCI Object Storage bucket
-- Object Storage prefix
 - OCI region
-
-`config target setup` also prompts for:
-
 - OCI Vault OCID
 - OCI compartment OCID
+- OCI config profile
+- Alternative OCI config file path
 
-The files are saved as:
+Profile files are saved as:
 
 ```text
-~/.kguard/source
-~/.kguard/target
+~/.kguard/profiles/<profile>
 ```
 
 Configuration precedence is:
 
 ```text
-flags > mode-specific environment variables > ~/.kguard/<mode>
+flags > selected profile
 ```
 
-If no config file exists, no mode-specific environment variables are set, and no relevant flags are passed, kguard asks you to initialize configuration with:
+If the selected profile does not exist, kguard asks you to initialize it with:
 
 ```bash
-./kguard config source setup
-./kguard config target setup
+./kguard profile create my-profile-dev
 ```
 
 The config files contain sensitive values such as Kafka passwords and are written with `0600` permissions.
 
+The OCI Object Storage prefix is always the selected profile name. For example, `--profile my-profile-dev` stores and reads backup objects under the `my-profile-dev/` prefix.
+
 ## Interactive Backup
 
 ```bash
-./kguard backup
+./kguard backup --profile my-profile-dev
 ```
 
-The CLI loads required values from flags, `KGUARD_SOURCE_*` environment variables, or `~/.kguard/source`.
+The CLI loads required values from flags or the selected profile.
 
 Backup always validates the collected users and ACLs before uploading the JSON file to Object Storage. The validation prints a user table and an ACL table; upload only happens if validation succeeds.
 
@@ -226,18 +223,18 @@ Backup always validates the collected users and ACLs before uploading the JSON f
 
 ```bash
 ./kguard backup \
+  --profile "my-profile-dev" \
   --bootstrap-servers "broker1:9093,broker2:9093" \
   --kafka-user "admin" \
   --kafka-password "admin-password" \
   --namespace "my-namespace" \
-  --bucket "my-bucket" \
-  --prefix "kafka-acl-backups"
+  --bucket "my-bucket"
 ```
 
 By default, the backup is saved with a name like:
 
 ```text
-kafka-acl-backups/kafka-acl-backup-YYYYMMDDTHHMMSSZ.json
+my-profile-dev/kafka-acl-backup-YYYYMMDDTHHMMSSZ.json
 ```
 
 Users whose names start with `super-user` are ignored by default. ACLs whose principal matches `User:super-user*` are ignored too.
@@ -249,43 +246,7 @@ You can also set the object name:
   --object-name "prod-backup.json"
 ```
 
-`--object-name` can be just the JSON file name. The configured `--prefix` is applied automatically unless the value already starts with that prefix.
-
-## Environment Variables
-
-You can export mode-specific environment variables instead of passing flags or using config files. Flags always take precedence over environment variables.
-
-For source backup configuration:
-
-```bash
-export KGUARD_SOURCE_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
-export KGUARD_SOURCE_KAFKA_USER="admin"
-export KGUARD_SOURCE_KAFKA_PASSWORD="admin-password"
-export KGUARD_SOURCE_NAMESPACE="my-namespace"
-export KGUARD_SOURCE_BUCKET="my-bucket"
-export KGUARD_SOURCE_PREFIX="kafka-acl-backups"
-export KGUARD_SOURCE_REGION="sa-saopaulo-1"
-export KGUARD_SOURCE_TIMEOUT="60s"
-
-./kguard backup
-```
-
-For target restore configuration:
-
-```bash
-export KGUARD_TARGET_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
-export KGUARD_TARGET_KAFKA_USER="admin"
-export KGUARD_TARGET_KAFKA_PASSWORD="admin-password"
-export KGUARD_TARGET_NAMESPACE="my-namespace"
-export KGUARD_TARGET_BUCKET="my-bucket"
-export KGUARD_TARGET_PREFIX="kafka-acl-backups"
-export KGUARD_TARGET_REGION="us-ashburn-1"
-export KGUARD_TARGET_OBJECT_NAME="kafka-acl-backups/prod-backup.json"
-export KGUARD_TARGET_VAULT_OCID="ocid1.vault.oc1..."
-export KGUARD_TARGET_COMPARTMENT_OCID="ocid1.compartment.oc1..."
-
-./kguard restore
-```
+`--object-name` can be just the JSON file name. The selected profile name is applied automatically as the Object Storage prefix unless the value already starts with that profile prefix.
 
 ## Validate Before Restore
 
@@ -293,6 +254,7 @@ Use `--validate` to download the backup, validate that every user has a password
 
 ```bash
 ./kguard restore --validate \
+  --profile "my-profile-dev" \
   --namespace "my-namespace" \
   --bucket "my-bucket" \
   --object-name "kafka-acl-backups/prod-backup.json" \
@@ -311,12 +273,12 @@ etl-user   etl-user   FAIL    secret "etl-user" was not found in the configured 
 ## Interactive Restore
 
 ```bash
-./kguard restore
+./kguard restore --profile my-profile-dev
 ```
 
 Restore downloads the backup from Object Storage, reads passwords from OCI Vault, and recreates SCRAM users and ACLs in Kafka.
 
-If `--object-name` or `KGUARD_TARGET_OBJECT_NAME` are not set, the CLI lists the 10 most recent `.json` backups from Object Storage under the configured prefix and lets you choose one.
+If `--object-name` and the profile's `OBJECT_NAME` are not set, the CLI lists the 10 most recent `.json` backups from Object Storage under the selected profile prefix and lets you choose one.
 
 Before applying restore, the CLI always runs the same validation as `--validate`: it shows the backup Kafka cluster, the target Kafka cluster, validates user passwords in Vault, and lists the ACLs that will be imported. If any password is missing or invalid, restore is not executed.
 
@@ -330,6 +292,7 @@ Restore behavior is deterministic:
 
 ```bash
 ./kguard restore \
+  --profile "my-profile-dev" \
   --bootstrap-servers "broker1:9093,broker2:9093" \
   --kafka-user "admin" \
   --kafka-password "admin-password" \
@@ -351,35 +314,17 @@ Apply restore to the target Kafka cluster? (Y/n)
 - `--bootstrap-servers`: comma-separated Kafka brokers.
 - `--kafka-user`: Kafka admin user.
 - `--kafka-password`: Kafka admin password.
+- `--profile`: kguard configuration profile name.
 - `--namespace`: OCI Object Storage namespace.
 - `--bucket`: bucket used to save/read backups.
-- `--prefix`: bucket prefix/folder. Default: `kafka-acl-backups`.
-- `--region`: OCI region override. Backup and restore can use different regions through their mode-specific configs or environment variables.
-- `--object-name`: backup JSON file name. The configured `--prefix` is applied automatically unless this already includes it.
+- `--region`: OCI region override.
+- `--object-name`: backup JSON file name. The selected profile name is used as the Object Storage prefix.
 - `--validate`: validate Vault secrets for backup users without executing restore.
 - `--vault-ocid`: Vault OCID used during restore.
 - `--compartment-ocid`: compartment OCID containing the secrets.
 - `--oci-profile`: profile from `~/.oci/config`. Default: `DEFAULT`.
 - `--oci-config`: alternative OCI config file path.
 - `--timeout`: operation timeout. Default: `1m`.
-
-## Environment Variable Reference
-
-Use `KGUARD_SOURCE_*` for `kguard backup` and `KGUARD_TARGET_*` for `kguard restore`.
-
-- `KGUARD_<MODE>_BOOTSTRAP_SERVERS`: equivalent to `--bootstrap-servers`.
-- `KGUARD_<MODE>_KAFKA_USER`: equivalent to `--kafka-user`.
-- `KGUARD_<MODE>_KAFKA_PASSWORD`: equivalent to `--kafka-password`.
-- `KGUARD_<MODE>_NAMESPACE`: equivalent to `--namespace`.
-- `KGUARD_<MODE>_BUCKET`: equivalent to `--bucket`.
-- `KGUARD_<MODE>_PREFIX`: equivalent to `--prefix`.
-- `KGUARD_<MODE>_REGION`: equivalent to `--region`.
-- `KGUARD_<MODE>_OBJECT_NAME`: equivalent to `--object-name`.
-- `KGUARD_<MODE>_VAULT_OCID`: equivalent to `--vault-ocid`.
-- `KGUARD_<MODE>_COMPARTMENT_OCID`: equivalent to `--compartment-ocid`.
-- `KGUARD_<MODE>_OCI_PROFILE`: equivalent to `--oci-profile`.
-- `KGUARD_<MODE>_OCI_CONFIG`: equivalent to `--oci-config`.
-- `KGUARD_<MODE>_TIMEOUT`: equivalent to `--timeout`. Accepts values like `60s`, `2m`, or a number of seconds.
 
 ## Notes
 

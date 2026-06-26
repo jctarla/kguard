@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -18,18 +17,22 @@ import (
 var backupObjectName string
 
 var backupCmd = &cobra.Command{
-	Use:   "backup",
-	Short: "Back up Kafka SCRAM users and ACLs to OCI Object Storage",
+	Use:           "backup",
+	Short:         "Back up Kafka SCRAM users and ACLs to OCI Object Storage",
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		interactive, _ := cmd.Flags().GetBool("interactive")
-		runtimeConfigMode = configModeSource
-		if !cmd.Flags().Changed("object-name") && backupObjectName == "" {
-			backupObjectName = getenv(envKey(configModeSource, "OBJECT_NAME"))
+		profile, err := selectedConfigProfile()
+		if err != nil {
+			return err
 		}
 		if err := hydrateCommon(interactive); err != nil {
 			return err
 		}
-		cmd.SilenceUsage = true
+		if err := applyProfileObjectName(profile, cmd.Flags().Changed("object-name"), &backupObjectName); err != nil {
+			return err
+		}
 		printBanner()
 		ctx, cancel := context.WithTimeout(context.Background(), kafkaFlags.Timeout)
 		defer cancel()
@@ -61,10 +64,6 @@ var backupCmd = &cobra.Command{
 		fmt.Printf("Backup saved: bucket=%s object=%s\n", ociFlags.Bucket, backupObjectName)
 		return nil
 	},
-}
-
-func getenv(name string) string {
-	return os.Getenv(name)
 }
 
 func validateBackupData(b *backup.File) error {
@@ -132,7 +131,7 @@ func validateBackupACLs(acls []backup.ACL) error {
 }
 
 func init() {
-	backupCmd.Flags().StringVar(&backupObjectName, "object-name", "", "Backup JSON file name. The configured --prefix is applied automatically unless this already includes it")
+	backupCmd.Flags().StringVar(&backupObjectName, "object-name", "", "Backup JSON file name. The selected profile name is used as the Object Storage prefix")
 	backupCmd.Flags().Bool("interactive", true, "Prompt for missing required values")
 	rootCmd.AddCommand(backupCmd)
 }
