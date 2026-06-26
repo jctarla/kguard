@@ -28,9 +28,9 @@ var restoreCmd = &cobra.Command{
 	Short: "Restore SCRAM users and ACLs from an OCI Object Storage backup",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		interactive, _ := cmd.Flags().GetBool("interactive")
-		runtimeConfigMode = configModeRestore
+		runtimeConfigMode = configModeTarget
 		if !cmd.Flags().Changed("object-name") && restoreObjectName == "" {
-			restoreObjectName = getenv(envKey(configModeRestore, "OBJECT_NAME"))
+			restoreObjectName = getenv(envKey(configModeTarget, "OBJECT_NAME"))
 		}
 		if restoreValidateOnly {
 			if err := hydrateOCIOnly(interactive); err != nil {

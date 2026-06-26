@@ -22,9 +22,9 @@ var backupCmd = &cobra.Command{
 	Short: "Back up Kafka SCRAM users and ACLs to OCI Object Storage",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		interactive, _ := cmd.Flags().GetBool("interactive")
-		runtimeConfigMode = configModeBackup
+		runtimeConfigMode = configModeSource
 		if !cmd.Flags().Changed("object-name") && backupObjectName == "" {
-			backupObjectName = getenv(envKey(configModeBackup, "OBJECT_NAME"))
+			backupObjectName = getenv(envKey(configModeSource, "OBJECT_NAME"))
 		}
 		if err := hydrateCommon(interactive); err != nil {
 			return err

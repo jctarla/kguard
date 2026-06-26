@@ -88,7 +88,7 @@ func hydrateCommon(interactive bool) error {
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err
 	}
-	if activeConfigMode() == configModeRestore {
+	if activeConfigMode() == configModeTarget {
 		return validateVaultConfig()
 	}
 	return nil
@@ -96,12 +96,12 @@ func hydrateCommon(interactive bool) error {
 
 func hydrateOCIOnly(interactive bool) error {
 	_ = interactive
-	hasSource, err := applyConfigDefaults(configModeRestore)
+	hasSource, err := applyConfigDefaults(configModeTarget)
 	if err != nil {
 		return err
 	}
 	if !hasSource {
-		return missingConfigError(configModeRestore)
+		return missingConfigError(configModeTarget)
 	}
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err

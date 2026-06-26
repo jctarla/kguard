@@ -16,16 +16,16 @@ import (
 )
 
 const (
-	configModeBackup  = "backup"
-	configModeRestore = "restore"
+	configModeSource = "source"
+	configModeTarget = "target"
 )
 
 var runtimeConfigMode string
 
 func init() {
 	rootCmd.AddCommand(configCmd)
-	configCmd.AddCommand(newModeConfigCommand(configModeBackup))
-	configCmd.AddCommand(newModeConfigCommand(configModeRestore))
+	configCmd.AddCommand(newModeConfigCommand(configModeSource))
+	configCmd.AddCommand(newModeConfigCommand(configModeTarget))
 }
 
 var configCmd = &cobra.Command{
@@ -34,8 +34,8 @@ var configCmd = &cobra.Command{
 	Long: `Manage kguard configuration files.
 
 Configuration is stored per operation:
-  - backup:  ~/.kguard/backup
-  - restore: ~/.kguard/restore`,
+  - source: ~/.kguard/source
+  - target: ~/.kguard/target`,
 }
 
 func newModeConfigCommand(mode string) *cobra.Command {
@@ -115,7 +115,7 @@ func runConfigWizard(mode string) error {
 	if err != nil {
 		return err
 	}
-	if mode == configModeRestore {
+	if mode == configModeTarget {
 		values[envKey(mode, "VAULT_OCID")], err = ask("OCI Vault OCID", "", false)
 		if err != nil {
 			return err
@@ -178,7 +178,7 @@ func activeConfigMode() string {
 	if runtimeConfigMode != "" {
 		return runtimeConfigMode
 	}
-	return configModeBackup
+	return configModeSource
 }
 
 func applyConfigDefaults(mode string) (bool, error) {
@@ -409,10 +409,10 @@ func readConfigFile(mode string) (map[string]string, bool, error) {
 
 func envPrefix(mode string) string {
 	switch mode {
-	case configModeRestore:
-		return "KGUARD_RESTORE"
+	case configModeTarget:
+		return "KGUARD_TARGET"
 	default:
-		return "KGUARD_BACKUP"
+		return "KGUARD_SOURCE"
 	}
 }
 
@@ -430,7 +430,7 @@ func configKeys(mode string) []string {
 		envKey(mode, "PREFIX"),
 		envKey(mode, "REGION"),
 	}
-	if mode == configModeRestore {
+	if mode == configModeTarget {
 		keys = append(keys, envKey(mode, "VAULT_OCID"), envKey(mode, "COMPARTMENT_OCID"))
 	}
 	return append(keys, envKey(mode, "TIMEOUT"), envKey(mode, "OCI_PROFILE"), envKey(mode, "OCI_CONFIG"))

@@ -2,6 +2,12 @@
 
 Go CLI to back up and restore Kafka SCRAM users and ACLs, storing backups in OCI Object Storage.
 
+## Objectives
+
+kguard helps Kafka administrators protect access configuration by backing up SCRAM users and ACLs into OCI Object Storage and restoring them when needed. Use it for disaster recovery, cluster migration, access auditing, or controlled replication of Kafka security settings across environments.
+
+Backups do not store user passwords. During restore, kguard retrieves each user's password from OCI Vault, using secrets named after the Kafka usernames.
+
 ## TL;DR
 
 Download the binary that matches your operating system and CPU architecture:
@@ -27,8 +33,8 @@ chmod +x kguard
 Configure backup and restore:
 
 ```bash
-./kguard config backup setup
-./kguard config restore setup
+./kguard config source setup
+./kguard config target setup
 ```
 
 Run backup:
@@ -152,22 +158,22 @@ Replace `<owner>` with the GitHub user or organization that owns the repository.
 kguard can store per-operation configuration files in the user's home directory:
 
 ```bash
-./kguard config backup setup
-./kguard config restore setup
+./kguard config source setup
+./kguard config target setup
 ```
 
 You can inspect current configuration with:
 
 ```bash
-./kguard config backup show
-./kguard config restore show
+./kguard config source show
+./kguard config target show
 ```
 
 `show` masks password values as `*****`.
 
 If a configuration file already exists, `setup` asks whether to overwrite it before changing anything.
 
-`config backup setup` prompts for:
+`config source setup` prompts for:
 
 - Kafka bootstrap servers
 - Kafka admin user
@@ -177,7 +183,7 @@ If a configuration file already exists, `setup` asks whether to overwrite it bef
 - Object Storage prefix
 - OCI region
 
-`config restore setup` also prompts for:
+`config target setup` also prompts for:
 
 - OCI Vault OCID
 - OCI compartment OCID
@@ -185,8 +191,8 @@ If a configuration file already exists, `setup` asks whether to overwrite it bef
 The files are saved as:
 
 ```text
-~/.kguard/backup
-~/.kguard/restore
+~/.kguard/source
+~/.kguard/target
 ```
 
 Configuration precedence is:
@@ -198,8 +204,8 @@ flags > mode-specific environment variables > ~/.kguard/<mode>
 If no config file exists, no mode-specific environment variables are set, and no relevant flags are passed, kguard asks you to initialize configuration with:
 
 ```bash
-./kguard config backup setup
-./kguard config restore setup
+./kguard config source setup
+./kguard config target setup
 ```
 
 The config files contain sensitive values such as Kafka passwords and are written with `0600` permissions.
@@ -210,7 +216,7 @@ The config files contain sensitive values such as Kafka passwords and are writte
 ./kguard backup
 ```
 
-The CLI loads required values from flags, `KGUARD_BACKUP_*` environment variables, or `~/.kguard/backup`.
+The CLI loads required values from flags, `KGUARD_SOURCE_*` environment variables, or `~/.kguard/source`.
 
 Backup always validates the collected users and ACLs before uploading the JSON file to Object Storage. The validation prints a user table and an ACL table; upload only happens if validation succeeds.
 
@@ -247,34 +253,34 @@ You can also set the object name:
 
 You can export mode-specific environment variables instead of passing flags or using config files. Flags always take precedence over environment variables.
 
-For backup:
+For source backup configuration:
 
 ```bash
-export KGUARD_BACKUP_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
-export KGUARD_BACKUP_KAFKA_USER="admin"
-export KGUARD_BACKUP_KAFKA_PASSWORD="admin-password"
-export KGUARD_BACKUP_NAMESPACE="my-namespace"
-export KGUARD_BACKUP_BUCKET="my-bucket"
-export KGUARD_BACKUP_PREFIX="kafka-acl-backups"
-export KGUARD_BACKUP_REGION="sa-saopaulo-1"
-export KGUARD_BACKUP_TIMEOUT="60s"
+export KGUARD_SOURCE_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
+export KGUARD_SOURCE_KAFKA_USER="admin"
+export KGUARD_SOURCE_KAFKA_PASSWORD="admin-password"
+export KGUARD_SOURCE_NAMESPACE="my-namespace"
+export KGUARD_SOURCE_BUCKET="my-bucket"
+export KGUARD_SOURCE_PREFIX="kafka-acl-backups"
+export KGUARD_SOURCE_REGION="sa-saopaulo-1"
+export KGUARD_SOURCE_TIMEOUT="60s"
 
 ./kguard backup
 ```
 
-For restore:
+For target restore configuration:
 
 ```bash
-export KGUARD_RESTORE_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
-export KGUARD_RESTORE_KAFKA_USER="admin"
-export KGUARD_RESTORE_KAFKA_PASSWORD="admin-password"
-export KGUARD_RESTORE_NAMESPACE="my-namespace"
-export KGUARD_RESTORE_BUCKET="my-bucket"
-export KGUARD_RESTORE_PREFIX="kafka-acl-backups"
-export KGUARD_RESTORE_REGION="us-ashburn-1"
-export KGUARD_RESTORE_OBJECT_NAME="kafka-acl-backups/prod-backup.json"
-export KGUARD_RESTORE_VAULT_OCID="ocid1.vault.oc1..."
-export KGUARD_RESTORE_COMPARTMENT_OCID="ocid1.compartment.oc1..."
+export KGUARD_TARGET_BOOTSTRAP_SERVERS="broker1:9093,broker2:9093"
+export KGUARD_TARGET_KAFKA_USER="admin"
+export KGUARD_TARGET_KAFKA_PASSWORD="admin-password"
+export KGUARD_TARGET_NAMESPACE="my-namespace"
+export KGUARD_TARGET_BUCKET="my-bucket"
+export KGUARD_TARGET_PREFIX="kafka-acl-backups"
+export KGUARD_TARGET_REGION="us-ashburn-1"
+export KGUARD_TARGET_OBJECT_NAME="kafka-acl-backups/prod-backup.json"
+export KGUARD_TARGET_VAULT_OCID="ocid1.vault.oc1..."
+export KGUARD_TARGET_COMPARTMENT_OCID="ocid1.compartment.oc1..."
 
 ./kguard restore
 ```
@@ -308,7 +314,7 @@ etl-user   etl-user   FAIL    secret "etl-user" was not found in the configured 
 
 Restore downloads the backup from Object Storage, reads passwords from OCI Vault, and recreates SCRAM users and ACLs in Kafka.
 
-If `--object-name` or `KGUARD_RESTORE_OBJECT_NAME` are not set, the CLI lists the 10 most recent `.json` backups from Object Storage under the configured prefix and lets you choose one.
+If `--object-name` or `KGUARD_TARGET_OBJECT_NAME` are not set, the CLI lists the 10 most recent `.json` backups from Object Storage under the configured prefix and lets you choose one.
 
 Before applying restore, the CLI always runs the same validation as `--validate`: it shows the backup Kafka cluster, the target Kafka cluster, validates user passwords in Vault, and lists the ACLs that will be imported. If any password is missing or invalid, restore is not executed.
 
@@ -357,7 +363,7 @@ Apply restore to the target Kafka cluster? (Y/n)
 
 ## Environment Variable Reference
 
-Use `KGUARD_BACKUP_*` for `kguard backup` and `KGUARD_RESTORE_*` for `kguard restore`.
+Use `KGUARD_SOURCE_*` for `kguard backup` and `KGUARD_TARGET_*` for `kguard restore`.
 
 - `KGUARD_<MODE>_BOOTSTRAP_SERVERS`: equivalent to `--bootstrap-servers`.
 - `KGUARD_<MODE>_KAFKA_USER`: equivalent to `--kafka-user`.
