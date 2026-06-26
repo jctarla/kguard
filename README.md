@@ -138,10 +138,6 @@ Use the binary that matches both the operating system and CPU architecture. For 
 
 Replace `<owner>` with the GitHub user or organization that owns the repository.
 
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
-
 ## Help
 
 ```bash
@@ -382,3 +378,7 @@ Use `KGUARD_BACKUP_*` for `kguard backup` and `KGUARD_RESTORE_*` for `kguard res
 - Backups do not store Kafka user passwords.
 - During restore, each password must exist in an OCI Vault secret with the same name as the Kafka user.
 - The CLI tries local OCI config first. If no valid config exists, it falls back to Instance Principal.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](https://github.com/jctarla/kguard/blob/main/LICENSE).
