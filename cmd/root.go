@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"kguard/internal/config"
@@ -16,7 +17,7 @@ var (
 	ociFlags   config.OCI
 )
 
-const appVersion = "1.0"
+var appVersion = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:           "kguard",
@@ -52,9 +53,11 @@ func init() {
 	rootCmd.PersistentFlags().DurationVar(&kafkaFlags.Timeout, "timeout", 60*time.Second, "Kafka/OCI operation timeout")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Namespace, "namespace", "", "OCI Object Storage namespace")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Bucket, "bucket", "", "OCI Object Storage bucket")
+	rootCmd.PersistentFlags().StringVar(&ociFlags.Prefix, "backup-prefix", "", "OCI Object Storage bucket prefix used for backup objects")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Region, "region", "", "OCI region override. Example: sa-saopaulo-1")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.CompartmentID, "compartment-ocid", "", "Compartment OCID used to list Vault secrets during restore")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.VaultID, "vault-ocid", "", "Vault OCID where Kafka user passwords are stored")
+	rootCmd.PersistentFlags().StringVar(&ociFlags.AuthMode, "oci-auth-mode", "", "OCI authentication mode: OCI_CONFIG or INSTANCE_PRINCIPAL")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Profile, "oci-profile", "DEFAULT", "Profile from ~/.oci/config")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.ConfigPath, "oci-config", "", "Alternative OCI config file path")
 }
@@ -67,7 +70,7 @@ func printBanner() {
 |_|\_\__, |\__,_|\__, |_|  \__,_|
      |___/       |___/
 
-kguard v%s - OCI-native Kafka access backup and restore with Vault and Object Storage
+kguard %s - OCI-native Kafka access backup and restore with Vault and Object Storage
 `, appVersion)
 	fmt.Println()
 }
@@ -91,7 +94,7 @@ func hydrateCommon(interactive bool) error {
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err
 	}
-	ociFlags.Prefix = profile
+	applyDefaultBackupPrefix(profile)
 	return nil
 }
 
@@ -111,8 +114,14 @@ func hydrateOCIOnly(interactive bool) error {
 	if err := config.ValidateOCI(ociFlags); err != nil {
 		return err
 	}
-	ociFlags.Prefix = profile
+	applyDefaultBackupPrefix(profile)
 	return validateVaultConfig(profile)
+}
+
+func applyDefaultBackupPrefix(profile string) {
+	if strings.TrimSpace(ociFlags.Prefix) == "" {
+		ociFlags.Prefix = profile
+	}
 }
 
 func ask(label, def string, secret bool) (string, error) {
@@ -127,6 +136,24 @@ func ask(label, def string, secret bool) (string, error) {
 func askOptional(label, def string) (string, error) {
 	p := promptui.Prompt{Label: label, Default: def, AllowEdit: true}
 	return p.Run()
+}
+
+func askAuthMode(def string) (string, error) {
+	options := []string{"OCI_CONFIG", "INSTANCE_PRINCIPAL"}
+	start := 0
+	for i, option := range options {
+		if strings.EqualFold(def, option) {
+			start = i
+			break
+		}
+	}
+	p := promptui.Select{
+		Label:     "OCI auth mode",
+		Items:     options,
+		CursorPos: start,
+	}
+	_, value, err := p.Run()
+	return value, err
 }
 
 func nonEmpty(v string) error {

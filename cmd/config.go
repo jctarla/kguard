@@ -25,6 +25,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&selectedProfile, "profile", "", "kguard configuration profile name")
 	rootCmd.AddCommand(profileCmd)
 	profileCmd.AddCommand(profileCreateCmd)
+	profileCmd.AddCommand(profileUpdateCmd)
 	profileCmd.AddCommand(profileShowCmd)
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
@@ -42,6 +43,7 @@ Configuration profiles are stored in:
 
 Examples:
   kguard profile create my-profile-dev
+  kguard profile update my-profile-dev
   kguard profile show my-profile-dev
   kguard profile list
   kguard profile delete my-profile-dev`,
@@ -52,7 +54,7 @@ Examples:
 
 var profileCreateCmd = &cobra.Command{
 	Use:           "create <profile>",
-	Short:         "Create or update a kguard configuration profile",
+	Short:         "Create a kguard configuration profile",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Args: func(cmd *cobra.Command, args []string) error {
@@ -65,7 +67,26 @@ var profileCreateCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runConfigWizard(args[0])
+		return runCreateProfile(args[0])
+	},
+}
+
+var profileUpdateCmd = &cobra.Command{
+	Use:           "update <profile>",
+	Short:         "Update a kguard configuration profile",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("use `kguard profile update <profile>`")
+		}
+		if err := validateProfileName(args[0]); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runUpdateProfile(args[0])
 	},
 }
 
@@ -125,7 +146,7 @@ var profileDeleteCmd = &cobra.Command{
 	},
 }
 
-func runConfigWizard(profile string) error {
+func runCreateProfile(profile string) error {
 	path, err := configFilePath(profile)
 	if err != nil {
 		return err
@@ -142,50 +163,79 @@ func runConfigWizard(profile string) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	return runConfigWizard(profile, nil)
+}
+
+func runUpdateProfile(profile string) error {
+	values, exists, err := readConfigFile(profile)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("configuration profile %q not found; run `kguard profile create %s`", profile, profile)
+	}
+	return runConfigWizard(profile, values)
+}
+
+func runConfigWizard(profile string, defaults map[string]string) error {
 	values := map[string]string{}
-	values["BOOTSTRAP_SERVERS"], err = ask("Kafka bootstrap servers", "broker1:9093,broker2:9093", false)
+	var err error
+	values["BOOTSTRAP_SERVERS"], err = ask("Kafka bootstrap servers", defaultValue(defaults, "BOOTSTRAP_SERVERS", "broker1:9093,broker2:9093"), false)
 	if err != nil {
 		return err
 	}
-	values["KAFKA_USER"], err = ask("Kafka admin user", "", false)
+	values["KAFKA_USER"], err = ask("Kafka admin user", defaultValue(defaults, "KAFKA_USER", ""), false)
 	if err != nil {
 		return err
 	}
-	values["KAFKA_PASSWORD"], err = ask("Kafka admin password", "", true)
+	values["KAFKA_PASSWORD"], err = ask("Kafka admin password", defaultValue(defaults, "KAFKA_PASSWORD", ""), true)
 	if err != nil {
 		return err
 	}
-	values["NAMESPACE"], err = ask("OCI Object Storage namespace", "", false)
+	values["NAMESPACE"], err = ask("OCI Object Storage namespace", defaultValue(defaults, "NAMESPACE", ""), false)
 	if err != nil {
 		return err
 	}
-	values["BUCKET"], err = ask("OCI Object Storage bucket", "", false)
+	values["BUCKET"], err = ask("OCI Object Storage bucket", defaultValue(defaults, "BUCKET", ""), false)
 	if err != nil {
 		return err
 	}
-	values["REGION"], err = ask("OCI region", "sa-saopaulo-1", false)
+	values["BUCKET_BACKUP_PREFIX"], err = ask("OCI Object Storage bucket backup prefix", defaultValue(defaults, "BUCKET_BACKUP_PREFIX", defaultValue(defaults, "BUCKET_PREFIX", profile)), false)
+	if err != nil {
+		return err
+	}
+	values["REGION"], err = ask("OCI region", defaultValue(defaults, "REGION", "sa-saopaulo-1"), false)
 	if err != nil {
 		return err
 	}
 	values["OBJECT_NAME"] = ""
-	values["VAULT_OCID"], err = ask("OCI Vault OCID", "", false)
+	values["VAULT_OCID"], err = ask("OCI Vault OCID", defaultValue(defaults, "VAULT_OCID", ""), false)
 	if err != nil {
 		return err
 	}
-	values["COMPARTMENT_OCID"], err = ask("OCI Compartment OCID", "", false)
+	values["COMPARTMENT_OCID"], err = ask("OCI Compartment OCID", defaultValue(defaults, "COMPARTMENT_OCID", ""), false)
 	if err != nil {
 		return err
 	}
 	values["TIMEOUT"] = "60s"
-	values["OCI_PROFILE"], err = ask("OCI config profile", "DEFAULT", false)
+	values["AUTH_MODE"], err = askAuthMode(defaultValue(defaults, "AUTH_MODE", "OCI_CONFIG"))
 	if err != nil {
 		return err
 	}
-	values["OCI_CONFIG"], err = askOptional("Alternative OCI config file path", "")
-	if err != nil {
-		return err
+	if values["AUTH_MODE"] == "OCI_CONFIG" {
+		values["OCI_PROFILE"], err = ask("OCI config profile", defaultValue(defaults, "OCI_PROFILE", "DEFAULT"), false)
+		if err != nil {
+			return err
+		}
+		values["OCI_CONFIG"], err = askOptional("Alternative OCI config file path", defaultValue(defaults, "OCI_CONFIG", ""))
+		if err != nil {
+			return err
+		}
+	} else {
+		values["OCI_PROFILE"] = ""
+		values["OCI_CONFIG"] = ""
 	}
-	path, err = writeConfigFile(profile, values)
+	path, err := writeConfigFile(profile, values)
 	if err != nil {
 		return err
 	}
@@ -209,6 +259,16 @@ func showConfig(profile string) error {
 		fmt.Printf("%s=%s\n", key, strconv.Quote(value))
 	}
 	return nil
+}
+
+func defaultValue(values map[string]string, key, fallback string) string {
+	if values == nil {
+		return fallback
+	}
+	if value, ok := values[key]; ok && value != "" {
+		return value
+	}
+	return fallback
 }
 
 func confirmOverwriteConfig(path string) (bool, error) {
@@ -260,9 +320,11 @@ func applyConfigValues(values map[string]string) {
 	setDurationVarFromMap(&kafkaFlags.Timeout, "timeout", values, "TIMEOUT")
 	setStringVarFromMap(&ociFlags.Namespace, "namespace", values, "NAMESPACE")
 	setStringVarFromMap(&ociFlags.Bucket, "bucket", values, "BUCKET")
+	setStringVarFromMap(&ociFlags.Prefix, "backup-prefix", values, "BUCKET_BACKUP_PREFIX")
 	setStringVarFromMap(&ociFlags.Region, "region", values, "REGION")
 	setStringVarFromMap(&ociFlags.CompartmentID, "compartment-ocid", values, "COMPARTMENT_OCID")
 	setStringVarFromMap(&ociFlags.VaultID, "vault-ocid", values, "VAULT_OCID")
+	setStringVarFromMap(&ociFlags.AuthMode, "oci-auth-mode", values, "AUTH_MODE")
 	setStringVarFromMap(&ociFlags.Profile, "oci-profile", values, "OCI_PROFILE")
 	setStringVarFromMap(&ociFlags.ConfigPath, "oci-config", values, "OCI_CONFIG")
 }
@@ -297,7 +359,7 @@ func missingConfigError(profile string) error {
 }
 
 func hasConfigFlags() bool {
-	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "region", "compartment-ocid", "vault-ocid", "oci-profile", "oci-config", "timeout"} {
+	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "backup-prefix", "region", "compartment-ocid", "vault-ocid", "oci-auth-mode", "oci-profile", "oci-config", "timeout"} {
 		if rootCmd.PersistentFlags().Changed(name) {
 			return true
 		}
@@ -488,11 +550,13 @@ func configKeys() []string {
 		"KAFKA_PASSWORD",
 		"NAMESPACE",
 		"BUCKET",
+		"BUCKET_BACKUP_PREFIX",
 		"REGION",
 		"OBJECT_NAME",
 		"VAULT_OCID",
 		"COMPARTMENT_OCID",
 		"TIMEOUT",
+		"AUTH_MODE",
 		"OCI_PROFILE",
 		"OCI_CONFIG",
 	}

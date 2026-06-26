@@ -57,6 +57,7 @@ var restoreCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		selectedExactObject := false
 		if restoreObjectName == "" && interactive {
 			selectCtx, cancel := context.WithTimeout(context.Background(), kafkaFlags.Timeout)
 			restoreObjectName, err = selectBackupObject(selectCtx, oci)
@@ -64,9 +65,10 @@ var restoreCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			selectedExactObject = true
 		}
 		validateCtx, cancel := context.WithTimeout(context.Background(), kafkaFlags.Timeout)
-		result, err := validateRestore(validateCtx, oci, restoreObjectName)
+		result, err := validateRestore(validateCtx, oci, restoreObjectName, selectedExactObject)
 		cancel()
 		if err != nil {
 			return err
@@ -105,15 +107,21 @@ var restoreCmd = &cobra.Command{
 }
 
 func init() {
-	restoreCmd.Flags().StringVar(&restoreObjectName, "object-name", "", "Backup JSON file name. The selected profile name is used as the Object Storage prefix")
+	restoreCmd.Flags().StringVar(&restoreObjectName, "object-name", "", "Backup JSON file name. The configured backup prefix is applied automatically unless this already includes it")
 	restoreCmd.Flags().BoolVar(&restoreValidateOnly, "validate", false, "Validate that all backup users have Vault passwords without executing restore")
 	restoreCmd.Flags().Bool("interactive", true, "Prompt for missing required values and confirmation")
 	rootCmd.AddCommand(restoreCmd)
 }
 
-func validateRestore(ctx context.Context, client *ociclient.Client, objectName string) (*restoreValidationResult, error) {
+func validateRestore(ctx context.Context, client *ociclient.Client, objectName string, exactObjectName bool) (*restoreValidationResult, error) {
 	fmt.Println("Downloading backup from Object Storage...")
-	b, err := client.DownloadBackup(ctx, objectName)
+	var b *backup.File
+	var err error
+	if exactObjectName {
+		b, err = client.DownloadBackupExact(ctx, objectName)
+	} else {
+		b, err = client.DownloadBackup(ctx, objectName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -129,14 +137,54 @@ func validateRestore(ctx context.Context, client *ociclient.Client, objectName s
 }
 
 func selectBackupObject(ctx context.Context, client *ociclient.Client) (string, error) {
-	fmt.Println("Listing the 10 most recent backups in Object Storage...")
-	backups, err := client.ListBackups(ctx, 10)
+	fmt.Println("Listing backup directories in Object Storage...")
+	prefixes, err := client.ListBackupPrefixes(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(prefixes) == 0 {
+		return "", fmt.Errorf("no JSON backups found in the bucket")
+	}
+	prefix, err := selectBackupPrefix(prefixes)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("Listing backups in %s...\n", displayPrefix(prefix))
+	backups, err := client.ListBackupsInPrefix(ctx, prefix)
 	if err != nil {
 		return "", err
 	}
 	if len(backups) == 0 {
-		return "", fmt.Errorf("no JSON backups found in the selected profile prefix")
+		return "", fmt.Errorf("no JSON backups found in %s", displayPrefix(prefix))
 	}
+	return selectBackupFile(backups)
+}
+
+func selectBackupPrefix(prefixes []string) (string, error) {
+	templates := &promptui.SelectTemplates{
+		Label:    "{{ . }}",
+		Active:   "> {{ . }}",
+		Inactive: "  {{ . }}",
+		Selected: "Selected directory: {{ . }}",
+	}
+	options := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		options = append(options, displayPrefix(prefix))
+	}
+	prompt := promptui.Select{
+		Label:     "Choose the backup directory",
+		Items:     options,
+		Templates: templates,
+		Size:      len(options),
+	}
+	index, _, err := prompt.Run()
+	if err != nil {
+		return "", err
+	}
+	return prefixes[index], nil
+}
+
+func selectBackupFile(backups []ociclient.BackupObject) (string, error) {
 	templates := &promptui.SelectTemplates{
 		Label:    "{{ . }}",
 		Active:   "> {{ .Name }}  {{ .LastModified }}  {{ .Size }}",
@@ -167,6 +215,13 @@ func selectBackupObject(ctx context.Context, client *ociclient.Client) (string, 
 		return "", err
 	}
 	return backups[index].Name, nil
+}
+
+func displayPrefix(prefix string) string {
+	if prefix == "/" {
+		return "(bucket root)"
+	}
+	return prefix + "/"
 }
 
 func joinOrDash(values []string) string {

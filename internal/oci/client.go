@@ -89,6 +89,15 @@ func (c *Client) UploadBackup(ctx context.Context, name string, b *backup.File) 
 
 func (c *Client) DownloadBackup(ctx context.Context, name string) (*backup.File, error) {
 	name = c.objectName(name)
+	return c.downloadBackupObject(ctx, name)
+}
+
+func (c *Client) DownloadBackupExact(ctx context.Context, name string) (*backup.File, error) {
+	name = strings.TrimLeft(strings.TrimSpace(name), "/")
+	return c.downloadBackupObject(ctx, name)
+}
+
+func (c *Client) downloadBackupObject(ctx context.Context, name string) (*backup.File, error) {
 	resp, err := c.object.GetObject(ctx, objectstorage.GetObjectRequest{
 		NamespaceName: common.String(c.cfg.Namespace),
 		BucketName:    common.String(c.cfg.Bucket),
@@ -105,13 +114,45 @@ func (c *Client) DownloadBackup(ctx context.Context, name string) (*backup.File,
 	return &b, nil
 }
 
-func (c *Client) ListBackups(ctx context.Context, limit int) ([]BackupObject, error) {
-	if limit <= 0 {
-		limit = 10
+func (c *Client) ListBackupPrefixes(ctx context.Context) ([]string, error) {
+	seen := map[string]struct{}{}
+	var start *string
+	for {
+		resp, err := c.object.ListObjects(ctx, objectstorage.ListObjectsRequest{
+			NamespaceName: common.String(c.cfg.Namespace),
+			BucketName:    common.String(c.cfg.Bucket),
+			Start:         start,
+			Limit:         common.Int(100),
+			Fields:        common.String("name"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list backup prefixes in Object Storage: %w", err)
+		}
+		for _, obj := range resp.Objects {
+			if obj.Name == nil || !strings.HasSuffix(strings.ToLower(*obj.Name), ".json") {
+				continue
+			}
+			prefix := objectPrefix(*obj.Name)
+			seen[prefix] = struct{}{}
+		}
+		if resp.NextStartWith == nil {
+			break
+		}
+		start = resp.NextStartWith
 	}
-	prefix := strings.Trim(strings.TrimSpace(c.cfg.Prefix), "/")
-	if prefix != "" {
-		prefix += "/"
+	prefixes := make([]string, 0, len(seen))
+	for prefix := range seen {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	return prefixes, nil
+}
+
+func (c *Client) ListBackupsInPrefix(ctx context.Context, prefix string) ([]BackupObject, error) {
+	selectedPrefix := strings.Trim(strings.TrimSpace(prefix), "/")
+	listPrefix := selectedPrefix
+	if listPrefix != "" {
+		listPrefix += "/"
 	}
 	var objects []BackupObject
 	var start *string
@@ -119,7 +160,7 @@ func (c *Client) ListBackups(ctx context.Context, limit int) ([]BackupObject, er
 		resp, err := c.object.ListObjects(ctx, objectstorage.ListObjectsRequest{
 			NamespaceName: common.String(c.cfg.Namespace),
 			BucketName:    common.String(c.cfg.Bucket),
-			Prefix:        common.String(prefix),
+			Prefix:        common.String(listPrefix),
 			Start:         start,
 			Limit:         common.Int(100),
 			Fields:        common.String("name,size,timeCreated,timeModified"),
@@ -129,6 +170,9 @@ func (c *Client) ListBackups(ctx context.Context, limit int) ([]BackupObject, er
 		}
 		for _, obj := range resp.Objects {
 			if obj.Name == nil || !strings.HasSuffix(strings.ToLower(*obj.Name), ".json") {
+				continue
+			}
+			if selectedPrefix == "" && objectPrefix(*obj.Name) != "/" {
 				continue
 			}
 			objects = append(objects, BackupObject{
@@ -145,10 +189,16 @@ func (c *Client) ListBackups(ctx context.Context, limit int) ([]BackupObject, er
 	sort.Slice(objects, func(i, j int) bool {
 		return objects[i].LastModified.After(objects[j].LastModified)
 	})
-	if len(objects) > limit {
-		objects = objects[:limit]
-	}
 	return objects, nil
+}
+
+func objectPrefix(name string) string {
+	name = strings.TrimLeft(strings.TrimSpace(name), "/")
+	dir, _, ok := strings.Cut(name, "/")
+	if !ok {
+		return "/"
+	}
+	return dir
 }
 
 func (c *Client) objectName(name string) string {
@@ -287,6 +337,25 @@ func (c *Client) getSecret(ctx context.Context, id string) (string, error) {
 }
 
 func provider(cfg config.OCI) (common.ConfigurationProvider, error) {
+	authMode := strings.ToUpper(strings.TrimSpace(cfg.AuthMode))
+	if authMode == "" {
+		authMode = "OCI_CONFIG"
+	}
+	switch authMode {
+	case "OCI_CONFIG":
+		return ociConfigProvider(cfg)
+	case "INSTANCE_PRINCIPAL":
+		p, err := auth.InstancePrincipalConfigurationProvider()
+		if err != nil {
+			return nil, fmt.Errorf("create Instance Principal OCI provider: %w", err)
+		}
+		return withRegion(p, cfg.Region), nil
+	default:
+		return nil, fmt.Errorf("invalid OCI auth mode %q: use OCI_CONFIG or INSTANCE_PRINCIPAL", cfg.AuthMode)
+	}
+}
+
+func ociConfigProvider(cfg config.OCI) (common.ConfigurationProvider, error) {
 	configPath := cfg.ConfigPath
 	if configPath == "" {
 		home, _ := os.UserHomeDir()
@@ -296,22 +365,24 @@ func provider(cfg config.OCI) (common.ConfigurationProvider, error) {
 	if profile == "" {
 		profile = "DEFAULT"
 	}
-	if _, err := os.Stat(configPath); err == nil {
-		p, err := common.ConfigurationProviderFromFileWithProfile(configPath, profile, "")
-		if err == nil {
-			if ok, _ := common.IsConfigurationProviderValid(p); ok {
-				genericProvider, err := auth.GetGenericConfigurationProvider(p)
-				if err == nil {
-					return withRegion(genericProvider, cfg.Region), nil
-				}
-			}
-		}
+	if _, err := os.Stat(configPath); err != nil {
+		return nil, fmt.Errorf("OCI config file %q is not available: %w", configPath, err)
 	}
-	p, err := auth.InstancePrincipalConfigurationProvider()
+	p, err := common.ConfigurationProviderFromFileWithProfile(configPath, profile, "")
 	if err != nil {
-		return nil, fmt.Errorf("local OCI config is invalid/missing and Instance Principal is unavailable: %w", err)
+		return nil, fmt.Errorf("load OCI config profile %q from %q: %w", profile, configPath, err)
 	}
-	return withRegion(p, cfg.Region), nil
+	if ok, err := common.IsConfigurationProviderValid(p); !ok {
+		if err != nil {
+			return nil, fmt.Errorf("validate OCI config profile %q from %q: %w", profile, configPath, err)
+		}
+		return nil, fmt.Errorf("OCI config profile %q from %q is invalid", profile, configPath)
+	}
+	genericProvider, err := auth.GetGenericConfigurationProvider(p)
+	if err != nil {
+		return nil, fmt.Errorf("create OCI config provider: %w", err)
+	}
+	return withRegion(genericProvider, cfg.Region), nil
 }
 
 type regionProvider struct {

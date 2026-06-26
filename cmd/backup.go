@@ -131,7 +131,7 @@ func validateBackupACLs(acls []backup.ACL) error {
 }
 
 func init() {
-	backupCmd.Flags().StringVar(&backupObjectName, "object-name", "", "Backup JSON file name. The selected profile name is used as the Object Storage prefix")
+	backupCmd.Flags().StringVar(&backupObjectName, "object-name", "", "Backup JSON file name. The configured backup prefix is applied automatically unless this already includes it")
 	backupCmd.Flags().Bool("interactive", true, "Prompt for missing required values")
 	rootCmd.AddCommand(backupCmd)
 }

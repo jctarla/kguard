@@ -8,7 +8,9 @@ kguard helps Kafka administrators protect access configuration by backing up SCR
 
 Backups do not store user passwords. During restore, kguard retrieves each user's password from OCI Vault, using secrets named after the Kafka usernames.
 
-For cross-region disaster recovery on OCI, use native Object Storage bucket replication for backup files and native OCI Vault secret replication for the required Kafka user passwords.
+**For cross-region disaster recovery on OCI**:
+  - Native Object Storage bucket replication for backup files, for more details check [Cross-Replication](https://docs.oracle.com/en/learn/object-replication-for-dr/#introduction)
+  - Native OCI Vault secret replication for the required Kafka user passwords, for more details check [Vault Secrets Replication](https://docs.oracle.com/en-us/iaas/Content/secret-management/Tasks/configure-replication.htm)
 
 ## TL;DR
 
@@ -165,6 +167,7 @@ kguard stores named configuration profiles in the user's home directory. A profi
 You can inspect, list, or delete profiles with:
 
 ```bash
+./kguard profile update my-profile-dev
 ./kguard profile show my-profile-dev
 ./kguard profile list
 ./kguard profile delete my-profile-dev
@@ -181,11 +184,17 @@ If a configuration file already exists, `profile create` asks whether to overwri
 - Kafka admin password
 - OCI Object Storage namespace
 - OCI Object Storage bucket
+- OCI Object Storage backup prefix. The suggested default is the profile name.
 - OCI region
 - OCI Vault OCID
 - OCI compartment OCID
+- OCI auth mode: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`
 - OCI config profile
 - Alternative OCI config file path
+
+Use `profile update <profile>` to change an existing profile. Each prompt is pre-filled with the current value so you can keep or replace it.
+
+When `OCI_CONFIG` is selected, kguard uses the configured OCI config file and profile. When `INSTANCE_PRINCIPAL` is selected, kguard uses OCI Instance Principal authentication and does not ask for an OCI config profile or file path.
 
 Profile files are saved as:
 
@@ -207,7 +216,7 @@ If the selected profile does not exist, kguard asks you to initialize it with:
 
 The config files contain sensitive values such as Kafka passwords and are written with `0600` permissions.
 
-The OCI Object Storage prefix is always the selected profile name. For example, `--profile my-profile-dev` stores and reads backup objects under the `my-profile-dev/` prefix.
+The OCI Object Storage backup prefix is stored in the profile. The profile wizard suggests the profile name as the default, but you can change it.
 
 ## Interactive Backup
 
@@ -228,10 +237,11 @@ Backup always validates the collected users and ACLs before uploading the JSON f
   --kafka-user "admin" \
   --kafka-password "admin-password" \
   --namespace "my-namespace" \
-  --bucket "my-bucket"
+  --bucket "my-bucket" \
+  --backup-prefix "my-profile-dev"
 ```
 
-By default, the backup is saved with a name like:
+By default, the backup is saved under the configured backup prefix with a name like:
 
 ```text
 my-profile-dev/kafka-acl-backup-YYYYMMDDTHHMMSSZ.json
@@ -246,7 +256,7 @@ You can also set the object name:
   --object-name "prod-backup.json"
 ```
 
-`--object-name` can be just the JSON file name. The selected profile name is applied automatically as the Object Storage prefix unless the value already starts with that profile prefix.
+`--object-name` can be just the JSON file name. The configured backup prefix is applied automatically unless the value already starts with that prefix.
 
 ## Validate Before Restore
 
@@ -278,7 +288,7 @@ etl-user   etl-user   FAIL    secret "etl-user" was not found in the configured 
 
 Restore downloads the backup from Object Storage, reads passwords from OCI Vault, and recreates SCRAM users and ACLs in Kafka.
 
-If `--object-name` and the profile's `OBJECT_NAME` are not set, the CLI lists the 10 most recent `.json` backups from Object Storage under the selected profile prefix and lets you choose one.
+If `--object-name` and the profile's `OBJECT_NAME` are not set, the CLI lists all backup directories in the bucket, lets you choose a directory, and then lets you choose any `.json` backup file in that directory.
 
 Before applying restore, the CLI always runs the same validation as `--validate`: it shows the backup Kafka cluster, the target Kafka cluster, validates user passwords in Vault, and lists the ACLs that will be imported. If any password is missing or invalid, restore is not executed.
 
@@ -317,11 +327,13 @@ Apply restore to the target Kafka cluster? (Y/n)
 - `--profile`: kguard configuration profile name.
 - `--namespace`: OCI Object Storage namespace.
 - `--bucket`: bucket used to save/read backups.
+- `--backup-prefix`: OCI Object Storage backup prefix. The profile wizard suggests the profile name by default.
 - `--region`: OCI region override.
-- `--object-name`: backup JSON file name. The selected profile name is used as the Object Storage prefix.
+- `--object-name`: backup JSON file name. The configured backup prefix is applied automatically unless this already includes it.
 - `--validate`: validate Vault secrets for backup users without executing restore.
 - `--vault-ocid`: Vault OCID used during restore.
 - `--compartment-ocid`: compartment OCID containing the secrets.
+- `--oci-auth-mode`: OCI authentication mode: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`.
 - `--oci-profile`: profile from `~/.oci/config`. Default: `DEFAULT`.
 - `--oci-config`: alternative OCI config file path.
 - `--timeout`: operation timeout. Default: `1m`.
@@ -330,7 +342,7 @@ Apply restore to the target Kafka cluster? (Y/n)
 
 - Backups do not store Kafka user passwords.
 - During restore, each password must exist in an OCI Vault secret with the same name as the Kafka user.
-- The CLI tries local OCI config first. If no valid config exists, it falls back to Instance Principal.
+- OCI authentication is explicit per profile: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`.
 
 ## License
 

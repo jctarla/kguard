@@ -20,6 +20,7 @@ type OCI struct {
 	Region        string
 	CompartmentID string
 	VaultID       string
+	AuthMode      string
 	Profile       string
 	ConfigPath    string
 }
