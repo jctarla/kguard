@@ -51,7 +51,7 @@ Run restore:
 
 ## Requirements
 
-- Go installed.
+- Go installed (if you plan to build the binary)
 - Administrative access to the Kafka cluster.
 - Kafka cluster using `SASL_SSL` with `SCRAM-SHA-512`.
 - OCI Object Storage bucket.
