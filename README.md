@@ -8,6 +8,8 @@ kguard helps Kafka administrators protect access configuration by backing up SCR
 
 Backups do not store user passwords. During restore, kguard retrieves each user's password from OCI Vault, using secrets named after the Kafka usernames.
 
+For cross-region disaster recovery on OCI, use native Object Storage bucket replication for backup files and native OCI Vault secret replication for the required Kafka user passwords.
+
 ## TL;DR
 
 Download the binary that matches your operating system and CPU architecture:
