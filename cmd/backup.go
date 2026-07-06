@@ -58,10 +58,11 @@ var backupCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := oci.UploadBackup(ctx, backupObjectName, b); err != nil {
+		savedObjectName, err := oci.UploadBackup(ctx, backupObjectName, b)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Backup saved: bucket=%s object=%s\n", ociFlags.Bucket, backupObjectName)
+		fmt.Printf("Backup saved: bucket=%s object=%s\n", ociFlags.Bucket, savedObjectName)
 		return nil
 	},
 }

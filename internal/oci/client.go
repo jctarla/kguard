@@ -66,10 +66,10 @@ func NewClient(cfg config.OCI) (*Client, error) {
 	return &Client{object: objectClient, vault: vaultClient, secret: secretClient, cfg: cfg}, nil
 }
 
-func (c *Client) UploadBackup(ctx context.Context, name string, b *backup.File) error {
+func (c *Client) UploadBackup(ctx context.Context, name string, b *backup.File) (string, error) {
 	body, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
-		return fmt.Errorf("serializar backup: %w", err)
+		return "", fmt.Errorf("serializar backup: %w", err)
 	}
 	name = c.objectName(name)
 	_, err = c.object.PutObject(ctx, objectstorage.PutObjectRequest{
@@ -82,9 +82,9 @@ func (c *Client) UploadBackup(ctx context.Context, name string, b *backup.File) 
 		OpcMeta:       map[string]string{"created-by": "kguard"},
 	})
 	if err != nil {
-		return fmt.Errorf("upload backup to Object Storage: %w", err)
+		return "", fmt.Errorf("upload backup to Object Storage: %w", err)
 	}
-	return nil
+	return name, nil
 }
 
 func (c *Client) DownloadBackup(ctx context.Context, name string) (*backup.File, error) {
