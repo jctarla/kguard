@@ -350,8 +350,10 @@ func provider(cfg config.OCI) (common.ConfigurationProvider, error) {
 			return nil, fmt.Errorf("create Instance Principal OCI provider: %w", err)
 		}
 		return withRegion(p, cfg.Region), nil
+	case "CLOUD_SHELL":
+		return cloudShellProvider(cfg)
 	default:
-		return nil, fmt.Errorf("invalid OCI auth mode %q: use OCI_CONFIG or INSTANCE_PRINCIPAL", cfg.AuthMode)
+		return nil, fmt.Errorf("invalid OCI auth mode %q: use OCI_CONFIG, INSTANCE_PRINCIPAL, or CLOUD_SHELL", cfg.AuthMode)
 	}
 }
 
@@ -381,6 +383,22 @@ func ociConfigProvider(cfg config.OCI) (common.ConfigurationProvider, error) {
 	genericProvider, err := auth.GetGenericConfigurationProvider(p)
 	if err != nil {
 		return nil, fmt.Errorf("create OCI config provider: %w", err)
+	}
+	return withRegion(genericProvider, cfg.Region), nil
+}
+
+func cloudShellProvider(cfg config.OCI) (common.ConfigurationProvider, error) {
+	p := common.DefaultConfigProvider()
+	authConfig, err := p.AuthType()
+	if err != nil {
+		return nil, fmt.Errorf("load OCI Cloud Shell auth config: %w", err)
+	}
+	if authConfig.AuthType != common.InstancePrincipalDelegationToken || authConfig.OboToken == nil || strings.TrimSpace(*authConfig.OboToken) == "" {
+		return nil, fmt.Errorf("CLOUD_SHELL auth requires an OCI Cloud Shell config with authentication_type=instance_principal and delegation_token_file; run inside OCI Cloud Shell with OCI_CLI_AUTH=instance_obo_user")
+	}
+	genericProvider, err := auth.GetGenericConfigurationProvider(p)
+	if err != nil {
+		return nil, fmt.Errorf("create OCI Cloud Shell provider: %w", err)
 	}
 	return withRegion(genericProvider, cfg.Region), nil
 }

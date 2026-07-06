@@ -57,7 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Region, "region", "", "OCI region override. Example: sa-saopaulo-1")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.CompartmentID, "compartment-ocid", "", "Compartment OCID used to list Vault secrets during restore")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.VaultID, "vault-ocid", "", "Vault OCID where Kafka user passwords are stored")
-	rootCmd.PersistentFlags().StringVar(&ociFlags.AuthMode, "oci-auth-mode", "", "OCI authentication mode: OCI_CONFIG or INSTANCE_PRINCIPAL")
+	rootCmd.PersistentFlags().StringVar(&ociFlags.AuthMode, "oci-auth-mode", "", "OCI authentication mode: OCI_CONFIG, INSTANCE_PRINCIPAL, or CLOUD_SHELL")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Profile, "oci-profile", "DEFAULT", "Profile from ~/.oci/config")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.ConfigPath, "oci-config", "", "Alternative OCI config file path")
 }
@@ -139,7 +139,7 @@ func askOptional(label, def string) (string, error) {
 }
 
 func askAuthMode(def string) (string, error) {
-	options := []string{"OCI_CONFIG", "INSTANCE_PRINCIPAL"}
+	options := []string{"OCI_CONFIG", "INSTANCE_PRINCIPAL", "CLOUD_SHELL"}
 	start := 0
 	for i, option := range options {
 		if strings.EqualFold(def, option) {

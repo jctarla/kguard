@@ -188,13 +188,13 @@ If a configuration file already exists, `profile create` asks whether to overwri
 - OCI region
 - OCI Vault OCID
 - OCI compartment OCID
-- OCI auth mode: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`
+- OCI auth mode: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`
 - OCI config profile
 - Alternative OCI config file path
 
 Use `profile update <profile>` to change an existing profile. Each prompt is pre-filled with the current value so you can keep or replace it.
 
-When `OCI_CONFIG` is selected, kguard uses the configured OCI config file and profile. When `INSTANCE_PRINCIPAL` is selected, kguard uses OCI Instance Principal authentication and does not ask for an OCI config profile or file path.
+When `OCI_CONFIG` is selected, kguard uses the configured OCI config file and profile. When `INSTANCE_PRINCIPAL` is selected, kguard uses OCI Instance Principal authentication and does not ask for an OCI config profile or file path. When `CLOUD_SHELL` is selected, kguard uses OCI Cloud Shell authentication through `OCI_CLI_AUTH=instance_obo_user` and the Cloud Shell delegation token, and also does not ask for an OCI config profile or file path.
 
 Profile files are saved as:
 
@@ -333,7 +333,7 @@ Apply restore to the target Kafka cluster? (Y/n)
 - `--validate`: validate Vault secrets for backup users without executing restore.
 - `--vault-ocid`: Vault OCID used during restore.
 - `--compartment-ocid`: compartment OCID containing the secrets.
-- `--oci-auth-mode`: OCI authentication mode: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`.
+- `--oci-auth-mode`: OCI authentication mode: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`.
 - `--oci-profile`: profile from `~/.oci/config`. Default: `DEFAULT`.
 - `--oci-config`: alternative OCI config file path.
 - `--timeout`: operation timeout. Default: `1m`.
@@ -342,7 +342,7 @@ Apply restore to the target Kafka cluster? (Y/n)
 
 - Backups do not store Kafka user passwords.
 - During restore, each password must exist in an OCI Vault secret with the same name as the Kafka user.
-- OCI authentication is explicit per profile: `OCI_CONFIG` or `INSTANCE_PRINCIPAL`.
+- OCI authentication is explicit per profile: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`.
 
 ## License
 
