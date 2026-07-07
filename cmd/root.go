@@ -18,6 +18,7 @@ var (
 )
 
 var fromJSONPath string
+var debugMode bool
 
 var appVersion = "dev"
 
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Profile, "oci-profile", "DEFAULT", "Profile from ~/.oci/config")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.ConfigPath, "oci-config", "", "Alternative OCI config file path")
 	rootCmd.PersistentFlags().StringVar(&fromJSONPath, "from-json", "", "Load default argument values from a local JSON file")
+	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "Show detailed error messages")
 }
 
 func printBanner() {

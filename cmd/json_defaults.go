@@ -15,46 +15,49 @@ var fromJSONValues map[string]any
 var fromJSONLoaded bool
 
 var jsonFlagAliases = map[string]string{
-	"auth_mode":             "oci-auth-mode",
-	"backup_prefix":         "backup-prefix",
-	"bucket_backup_prefix":  "backup-prefix",
-	"compartment_id":        "compartment-ocid",
-	"compartment_ocid":      "compartment-ocid",
-	"config":                "oci-config",
-	"kafka_admin_password":  "kafka-password",
-	"kafka_admin_user":      "kafka-user",
-	"object":                "object-name",
-	"object_name":           "object-name",
-	"oci_auth_mode":         "oci-auth-mode",
-	"oci_config":            "oci-config",
-	"oci_profile":           "oci-profile",
-	"scram_iterations":      "iterations",
-	"scram_mechanism":       "mechanism",
-	"vault_id":              "vault-ocid",
-	"vault_key_id":          "vault-key-ocid",
-	"vault_key_ocid":        "vault-key-ocid",
-	"vault_ocid":            "vault-ocid",
-	"resource_pattern_type": "resource-pattern-type",
-	"transactional_id":      "transactional-id",
-	"transactional_ids":     "transactional-id",
-	"delegation_token":      "delegation-token",
-	"delegation_tokens":     "delegation-token",
-	"user_principal":        "user-principal",
-	"user_principals":       "user-principal",
-	"allow_principal":       "allow-principal",
-	"allow_principals":      "allow-principal",
-	"deny_principal":        "deny-principal",
-	"deny_principals":       "deny-principal",
-	"allow_host":            "allow-host",
-	"allow_hosts":           "allow-host",
-	"deny_host":             "deny-host",
-	"deny_hosts":            "deny-host",
-	"operations":            "operation",
-	"topics":                "topic",
-	"groups":                "group",
-	"user_create_password":  "password",
-	"kafka_user_password":   "password",
-	"force_delete":          "force",
+	"auth_mode":               "oci-auth-mode",
+	"backup_prefix":           "backup-prefix",
+	"bucket_backup_prefix":    "backup-prefix",
+	"compartment_id":          "compartment-ocid",
+	"compartment_ocid":        "compartment-ocid",
+	"config":                  "oci-config",
+	"kafka_admin_password":    "kafka-password",
+	"kafka_admin_user":        "kafka-user",
+	"object":                  "object-name",
+	"object_name":             "object-name",
+	"oci_auth_mode":           "oci-auth-mode",
+	"oci_config":              "oci-config",
+	"oci_profile":             "oci-profile",
+	"scram_iterations":        "iterations",
+	"scram_mechanism":         "mechanism",
+	"vault_id":                "vault-ocid",
+	"vault_key_id":            "vault-key-ocid",
+	"vault_key_ocid":          "vault-key-ocid",
+	"vault_ocid":              "vault-ocid",
+	"resource_pattern_type":   "resource-pattern-type",
+	"transactional_id":        "transactional-id",
+	"transactional_ids":       "transactional-id",
+	"delegation_token":        "delegation-token",
+	"delegation_tokens":       "delegation-token",
+	"user_principal":          "user-principal",
+	"user_principals":         "user-principal",
+	"allow_principal":         "allow-principal",
+	"allow_principals":        "allow-principal",
+	"deny_principal":          "deny-principal",
+	"deny_principals":         "deny-principal",
+	"allow_host":              "allow-host",
+	"allow_hosts":             "allow-host",
+	"deny_host":               "deny-host",
+	"deny_hosts":              "deny-host",
+	"debug_mode":              "debug",
+	"operations":              "operation",
+	"topics":                  "topic",
+	"groups":                  "group",
+	"user_create_password":    "password",
+	"kafka_user_password":     "password",
+	"force_delete":            "force",
+	"force_password":          "force-password-creation",
+	"force_password_creation": "force-password-creation",
 }
 
 func applyFromJSONDefaults(cmd *cobra.Command) error {
@@ -99,6 +102,22 @@ func fromJSONValuesOrNil() map[string]any {
 		return nil
 	}
 	return fromJSONValues
+}
+
+func stringFromJSON(key string) string {
+	values := fromJSONValuesOrNil()
+	if len(values) == 0 {
+		return ""
+	}
+	value, ok := values[normalizeJSONKey(key)]
+	if !ok {
+		return ""
+	}
+	text, err := jsonScalarString(value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
 
 func normalizeJSONKeys(raw map[string]any) map[string]any {

@@ -80,11 +80,15 @@ func printValidateACLsTable(acls []backup.ACL) {
 func usersFromVaultValidations(validations []ociclient.PasswordValidation) []validateUserRow {
 	users := make([]validateUserRow, 0, len(validations))
 	for _, validation := range validations {
+		message := validation.Message
+		if debugMode && validation.DebugMessage != "" {
+			message = validation.DebugMessage
+		}
 		users = append(users, validateUserRow{
 			User:    validation.User,
 			Secret:  validation.Secret,
 			Valid:   validation.Valid,
-			Message: validation.Message,
+			Message: message,
 		})
 	}
 	return users

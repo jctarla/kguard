@@ -3,6 +3,7 @@ package oci
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -31,10 +32,11 @@ type Client struct {
 }
 
 type PasswordValidation struct {
-	User    string
-	Secret  string
-	Valid   bool
-	Message string
+	User         string
+	Secret       string
+	Valid        bool
+	Message      string
+	DebugMessage string
 }
 
 type BackupObject struct {
@@ -42,6 +44,17 @@ type BackupObject struct {
 	Size         int64
 	LastModified time.Time
 }
+
+type secretInfo struct {
+	ID             string
+	LifecycleState vault.SecretSummaryLifecycleStateEnum
+}
+
+const (
+	secretActivationTimeout  = 2 * time.Minute
+	secretActivationInterval = 5 * time.Second
+	secretUpdateTimeout      = 1 * time.Minute
+)
 
 func NewClient(cfg config.OCI) (*Client, error) {
 	provider, err := provider(cfg)
@@ -237,7 +250,7 @@ func int64Value(v *int64) int64 {
 }
 
 func (c *Client) LoadPasswords(ctx context.Context, users []backup.User) (map[string]string, error) {
-	validations, passwords, err := c.validatePasswords(ctx, users, true)
+	validations, passwords, err := c.validatePasswords(ctx, users, true, false)
 	if err != nil {
 		return nil, err
 	}
@@ -250,12 +263,16 @@ func (c *Client) LoadPasswords(ctx context.Context, users []backup.User) (map[st
 }
 
 func (c *Client) ValidatePasswords(ctx context.Context, users []backup.User) ([]PasswordValidation, error) {
-	validations, _, err := c.validatePasswords(ctx, users, false)
+	validations, _, err := c.validatePasswords(ctx, users, false, false)
 	return validations, err
 }
 
 func (c *Client) ValidateAndLoadPasswords(ctx context.Context, users []backup.User) ([]PasswordValidation, map[string]string, error) {
-	return c.validatePasswords(ctx, users, true)
+	return c.validatePasswords(ctx, users, true, false)
+}
+
+func (c *Client) ValidateLoadOrCreatePasswords(ctx context.Context, users []backup.User) ([]PasswordValidation, map[string]string, error) {
+	return c.validatePasswords(ctx, users, true, true)
 }
 
 func (c *Client) SecretExists(ctx context.Context, name string) (bool, error) {
@@ -263,7 +280,7 @@ func (c *Client) SecretExists(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return secretsByName[name] != "", nil
+	return secretsByName[name].ID != "", nil
 }
 
 func (c *Client) CreatePasswordSecret(ctx context.Context, name, password string) error {
@@ -297,12 +314,16 @@ func (c *Client) DeletePasswordSecret(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	secretID := secretsByName[name]
+	secretID := secretsByName[name].ID
 	if secretID == "" {
 		return fmt.Errorf("secret %q was not found in the configured Vault", name)
 	}
+	deleteAt := common.SDKTime{Time: time.Now().UTC().Add(7 * 24 * time.Hour)}
 	_, err = c.vault.ScheduleSecretDeletion(ctx, vault.ScheduleSecretDeletionRequest{
 		SecretId: common.String(secretID),
+		ScheduleSecretDeletionDetails: vault.ScheduleSecretDeletionDetails{
+			TimeOfDeletion: &deleteAt,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("schedule Vault secret deletion %q: %w", name, err)
@@ -310,12 +331,98 @@ func (c *Client) DeletePasswordSecret(ctx context.Context, name string) error {
 	return nil
 }
 
-func (c *Client) validatePasswords(ctx context.Context, users []backup.User, keepPasswords bool) ([]PasswordValidation, map[string]string, error) {
+func (c *Client) overwritePasswordSecret(ctx context.Context, id, name, password string) error {
+	encoded := base64.StdEncoding.EncodeToString([]byte(password))
+	ctx, cancel := context.WithTimeout(ctx, secretUpdateTimeout)
+	defer cancel()
+
+	var lastErr error
+	for {
+		contentName := fmt.Sprintf("kguard-%s", time.Now().UTC().Format("20060102T150405Z"))
+		_, err := c.vault.UpdateSecret(ctx, vault.UpdateSecretRequest{
+			SecretId: common.String(id),
+			UpdateSecretDetails: vault.UpdateSecretDetails{
+				SecretContent: vault.Base64SecretContentDetails{
+					Name:    common.String(contentName),
+					Content: common.String(encoded),
+					Stage:   vault.SecretContentDetailsStageCurrent,
+				},
+				FreeformTags: map[string]string{"created-by": "kguard", "kafka-user": name},
+			},
+		})
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("update Vault secret %q: %w", name, lastErr)
+		case <-time.After(secretActivationInterval):
+		}
+	}
+}
+
+func (c *Client) cancelPasswordSecretDeletion(ctx context.Context, id, name string) error {
+	_, err := c.vault.CancelSecretDeletion(ctx, vault.CancelSecretDeletionRequest{
+		SecretId: common.String(id),
+	})
+	if err != nil {
+		return fmt.Errorf("cancel Vault secret deletion %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) waitPasswordSecretActive(ctx context.Context, id, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, secretActivationTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(secretActivationInterval)
+	defer ticker.Stop()
+
+	fmt.Printf("Waiting for OCI Vault secret %q deletion cancellation to complete...\n", name)
+	for {
+		state, err := c.passwordSecretLifecycleState(ctx, id)
+		if err != nil {
+			return fmt.Errorf("wait for Vault secret %q to become ACTIVE: %w", name, err)
+		}
+		if state == vault.SecretLifecycleStateActive {
+			return nil
+		}
+		if state != vault.SecretLifecycleStateCancellingDeletion && state != vault.SecretLifecycleStatePendingDeletion {
+			return fmt.Errorf("wait for Vault secret %q to become ACTIVE: current lifecycle state is %s", name, state)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for Vault secret %q to become ACTIVE: %w", name, ctx.Err())
+		case <-ticker.C:
+			fmt.Printf("Still waiting for OCI Vault secret %q to become ACTIVE; current state is %s...\n", name, state)
+		}
+	}
+}
+
+func (c *Client) passwordSecretLifecycleState(ctx context.Context, id string) (vault.SecretLifecycleStateEnum, error) {
+	resp, err := c.vault.GetSecret(ctx, vault.GetSecretRequest{
+		SecretId: common.String(id),
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Secret.LifecycleState, nil
+}
+
+func (c *Client) validatePasswords(ctx context.Context, users []backup.User, keepPasswords bool, createMissing bool) ([]PasswordValidation, map[string]string, error) {
 	if strings.TrimSpace(c.cfg.VaultID) == "" {
 		return nil, nil, fmt.Errorf("provide the Vault OCID to locate password secrets")
 	}
 	if strings.TrimSpace(c.cfg.CompartmentID) == "" {
 		return nil, nil, fmt.Errorf("provide the compartment OCID to list Vault secrets")
+	}
+	if createMissing {
+		if err := config.ValidateVaultCreateSecret(c.cfg); err != nil {
+			return nil, nil, err
+		}
 	}
 	secretsByName, err := c.listSecrets(ctx)
 	if err != nil {
@@ -325,15 +432,71 @@ func (c *Client) validatePasswords(ctx context.Context, users []backup.User, kee
 	validations := make([]PasswordValidation, 0, len(users))
 	for _, u := range users {
 		validation := PasswordValidation{User: u.Name, Secret: u.Name}
-		id := secretsByName[u.Name]
-		if id == "" {
+		secret := secretsByName[u.Name]
+		if secret.ID == "" {
+			if createMissing {
+				password, err := generatedPassword()
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := c.CreatePasswordSecret(ctx, u.Name, password); err != nil {
+					validation.Message = fmt.Sprintf("secret %q could not be created in OCI Vault", u.Name)
+					validation.DebugMessage = fmt.Sprintf("create secret %q: %v", u.Name, err)
+					validations = append(validations, validation)
+					continue
+				}
+				validation.Valid = true
+				validation.Message = "secret created in OCI Vault with generated password"
+				validations = append(validations, validation)
+				if keepPasswords {
+					out[u.Name] = password
+				}
+				continue
+			}
 			validation.Message = fmt.Sprintf("secret %q was not found in the configured Vault", u.Name)
 			validations = append(validations, validation)
 			continue
 		}
-		value, err := c.getSecret(ctx, id)
+		if secret.LifecycleState == vault.SecretSummaryLifecycleStatePendingDeletion {
+			if createMissing {
+				password, err := generatedPassword()
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := c.cancelPasswordSecretDeletion(ctx, secret.ID, u.Name); err != nil {
+					validation.Message = fmt.Sprintf("secret %q deletion could not be cancelled in OCI Vault", u.Name)
+					validation.DebugMessage = fmt.Sprintf("cancel secret deletion %q: %v", u.Name, err)
+					validations = append(validations, validation)
+					continue
+				}
+				if err := c.waitPasswordSecretActive(ctx, secret.ID, u.Name); err != nil {
+					validation.Message = fmt.Sprintf("secret %q did not become ACTIVE in OCI Vault", u.Name)
+					validation.DebugMessage = fmt.Sprintf("wait secret %q active: %v", u.Name, err)
+					validations = append(validations, validation)
+					continue
+				}
+				if err := c.overwritePasswordSecret(ctx, secret.ID, u.Name, password); err != nil {
+					validation.Message = fmt.Sprintf("secret %q could not be updated in OCI Vault", u.Name)
+					validation.DebugMessage = fmt.Sprintf("update secret %q: %v", u.Name, err)
+					validations = append(validations, validation)
+					continue
+				}
+				validation.Valid = true
+				validation.Message = "secret deletion cancelled and password replaced in OCI Vault"
+				validations = append(validations, validation)
+				if keepPasswords {
+					out[u.Name] = password
+				}
+				continue
+			}
+			validation.Message = fmt.Sprintf("secret %q is pending deletion in OCI Vault", u.Name)
+			validations = append(validations, validation)
+			continue
+		}
+		value, err := c.getSecret(ctx, secret.ID)
 		if err != nil {
-			validation.Message = fmt.Sprintf("ler secret %q: %v", u.Name, err)
+			validation.Message = fmt.Sprintf("secret %q could not be read from OCI Vault", u.Name)
+			validation.DebugMessage = fmt.Sprintf("read secret %q: %v", u.Name, err)
 			validations = append(validations, validation)
 			continue
 		}
@@ -352,8 +515,16 @@ func (c *Client) validatePasswords(ctx context.Context, users []backup.User, kee
 	return validations, out, nil
 }
 
-func (c *Client) listSecrets(ctx context.Context) (map[string]string, error) {
-	result := map[string]string{}
+func generatedPassword() (string, error) {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate random password: %w", err)
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x", random[0:4], random[4:6], random[6:8], random[8:10], random[10:16]), nil
+}
+
+func (c *Client) listSecrets(ctx context.Context) (map[string]secretInfo, error) {
+	result := map[string]secretInfo{}
 	var page *string
 	for {
 		resp, err := c.vault.ListSecrets(ctx, vault.ListSecretsRequest{
@@ -367,7 +538,10 @@ func (c *Client) listSecrets(ctx context.Context) (map[string]string, error) {
 		}
 		for _, s := range resp.Items {
 			if s.SecretName != nil && s.Id != nil {
-				result[*s.SecretName] = *s.Id
+				result[*s.SecretName] = secretInfo{
+					ID:             *s.Id,
+					LifecycleState: s.LifecycleState,
+				}
 			}
 		}
 		if resp.OpcNextPage == nil {

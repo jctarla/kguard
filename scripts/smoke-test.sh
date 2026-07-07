@@ -157,6 +157,7 @@ write_json_inputs() {
   cat > "$KGUARD_USER_JSON" <<EOF
 {
   "profile": "$(json_escape "$KGUARD_PROFILE")",
+  "username": "$(json_escape "$KGUARD_TEST_USER")",
   "password": "$(json_escape "$KGUARD_TEST_PASSWORD")",
   "mechanism": "SCRAM-SHA-512",
   "iterations": 4096,
@@ -186,7 +187,7 @@ run_step "check existing profile" "$KGUARD_BIN" profile show "$KGUARD_PROFILE" |
 run_step "write from-json inputs" write_json_inputs || fail_and_cleanup
 
 run_step "create smoke user from JSON" \
-  "$KGUARD_BIN" user create "$KGUARD_TEST_USER" \
+  "$KGUARD_BIN" user create \
     --from-json "$KGUARD_USER_JSON" || fail_and_cleanup
 CREATED_USER="Y"
 

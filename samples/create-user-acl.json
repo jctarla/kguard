@@ -1,0 +1,6 @@
+{
+  "allow_principal": "User:app-user-kguard-test",
+  "allow_host": "*",
+  "operation": "Read",
+  "topic": "my-topic"
+}

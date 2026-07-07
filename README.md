@@ -267,6 +267,8 @@ JSON fields:
 | `oci_config` | Alternative OCI config file path. | OCI operations using `OCI_CONFIG` | N |
 | `object_name` | Backup object name to upload or restore. | `backup`, `restore` | N for `backup`; Y for non-interactive `restore` unless selecting interactively |
 | `validate` | Restore validation-only mode. | `restore` | N |
+| `force_password_creation` | During restore, creates missing OCI Vault secrets with generated random passwords before restoring Kafka users. Cannot be used with `validate`. | `restore` | N |
+| `username` | Kafka SCRAM user name to create or delete. Explicit positional argument still has priority when provided. | `user create`, `user delete` | Y unless provided as positional argument |
 | `password` | Password for the Kafka SCRAM user being created. | `user create` | Y for non-interactive `user create` unless provided by flag |
 | `mechanism` | SCRAM mechanism, usually `SCRAM-SHA-512`. | `user create`, `user delete` | N |
 | `iterations` | SCRAM iteration count. | `user create` | N |
@@ -288,6 +290,7 @@ JSON fields:
 | `principal` | Principal filter for listing ACLs. Accepts a string or list. | `acl list` | N |
 | `force` | Assumes yes for supported confirmations. | `acl create`, `acl delete` | N |
 | `interactive` | Enables or disables interactive prompts. | `backup`, `restore`, `user`, `acl` | N |
+| `debug` | Shows detailed error messages, including full OCI SDK errors in validation output. | All commands | N |
 
 If the selected profile does not exist, kguard asks you to initialize it with:
 
@@ -367,6 +370,12 @@ etl-user   etl-user   FAIL    secret "etl-user" was not found in the configured 
 ./kguard restore --profile my-profile-dev
 ```
 
+To force creation of missing Vault secrets during restore, kguard generates passwords in a UUID-like format and creates the missing secrets before restoring Kafka users:
+
+```bash
+./kguard restore --profile my-profile-dev --force-password-creation
+```
+
 Restore downloads the backup from Object Storage, reads passwords from OCI Vault, and recreates SCRAM users and ACLs in Kafka.
 
 If `--object-name` and the profile's `OBJECT_NAME` are not set, the CLI lists all backup directories in the bucket, lets you choose a directory, and then lets you choose any `.json` backup file in that directory.
@@ -415,6 +424,7 @@ If the profile already exists, the JSON can contain only the values specific to 
 ```json
 {
   "profile": "my-profile-dev",
+  "username": "app-user",
   "password": "change-me",
   "mechanism": "SCRAM-SHA-512",
   "iterations": 4096
@@ -424,7 +434,7 @@ If the profile already exists, the JSON can contain only the values specific to 
 Create the user with:
 
 ```bash
-./kguard user create app-user --from-json ./create-user.json
+./kguard user create --from-json ./create-user.json
 ```
 
 Example `create-user-acl.json`:
@@ -491,6 +501,7 @@ The ACL flags follow the Kafka `kafka-acls.sh` style:
 - `--kafka-user`: Kafka admin user.
 - `--kafka-password`: Kafka admin password.
 - `--from-json`: local JSON file used as an intermediate defaults layer between explicit flags and the selected profile.
+- `--debug`: show detailed error messages.
 - `--profile`: kguard configuration profile name.
 - `--namespace`: OCI Object Storage namespace.
 - `--bucket`: bucket used to save/read backups.
@@ -498,6 +509,7 @@ The ACL flags follow the Kafka `kafka-acls.sh` style:
 - `--region`: OCI region override.
 - `--object-name`: backup JSON file name. The configured backup prefix is applied automatically unless this already includes it.
 - `--validate`: validate Vault secrets for backup users without executing restore.
+- `--force-password-creation`: create missing Vault secrets with generated random passwords during restore.
 - `--vault-ocid`: Vault OCID used during restore.
 - `--vault-key-ocid`: Vault master encryption key OCID used to create new password secrets.
 - `--compartment-ocid`: compartment OCID containing the secrets.

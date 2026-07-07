@@ -17,6 +17,7 @@ import (
 
 var restoreObjectName string
 var restoreValidateOnly bool
+var restoreForcePasswordCreation bool
 
 type restoreValidationResult struct {
 	Backup    *backup.File
@@ -36,6 +37,9 @@ var restoreCmd = &cobra.Command{
 			return err
 		}
 		if restoreValidateOnly {
+			if restoreForcePasswordCreation {
+				return fmt.Errorf("--force-password-creation cannot be used with --validate")
+			}
 			if err := hydrateOCIOnly(interactive); err != nil {
 				return err
 			}
@@ -43,8 +47,14 @@ var restoreCmd = &cobra.Command{
 			if err := hydrateCommon(interactive); err != nil {
 				return err
 			}
-			if err := config.ValidateVault(ociFlags); err != nil {
-				return err
+			if restoreForcePasswordCreation {
+				if err := config.ValidateVaultCreateSecret(ociFlags); err != nil {
+					return err
+				}
+			} else {
+				if err := config.ValidateVault(ociFlags); err != nil {
+					return err
+				}
 			}
 		}
 		if err := applyProfileObjectName(profile, cmd.Flags().Changed("object-name"), &restoreObjectName); err != nil {
@@ -74,12 +84,15 @@ var restoreCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if hasInvalidValidateUsers(result.Users) {
-			return fmt.Errorf("validation failed: one or more users do not have a valid password in Vault")
+		if hasInvalidValidateUsers(result.Users) && !restoreForcePasswordCreation {
+			return fmt.Errorf("validation failed: one or more users do not have a valid password in OCI Vault. To restore anyway, rerun with --force-password-creation; kguard will create missing Vault secrets with random passwords in UUID format before restoring Kafka users")
 		}
 		if restoreValidateOnly {
 			fmt.Println("Validation completed successfully. No restore operation was executed.")
 			return nil
+		}
+		if restoreForcePasswordCreation {
+			fmt.Println("\033[1mWARNING: --force-password-creation is enabled. Missing or pending-deletion OCI Vault secrets may be created, recovered, or replaced.\033[0m")
 		}
 		if interactive {
 			confirmed, err := confirmRestore()
@@ -89,6 +102,21 @@ var restoreCmd = &cobra.Command{
 			if !confirmed {
 				fmt.Println("Restore canceled by user.")
 				return nil
+			}
+		}
+		if restoreForcePasswordCreation {
+			fmt.Println("Preparing OCI Vault passwords for restore...")
+			forceCtx, cancel := context.WithTimeout(context.Background(), kafkaFlags.Timeout)
+			validations, passwords, err := oci.ValidateLoadOrCreatePasswords(forceCtx, result.Backup.Users)
+			cancel()
+			if err != nil {
+				return err
+			}
+			result.Users = usersFromVaultValidations(validations)
+			result.Passwords = passwords
+			if hasInvalidValidateUsers(result.Users) {
+				printValidateReport("restore", result.Backup, result.Users)
+				return fmt.Errorf("forced password creation failed: one or more users still do not have a valid password in OCI Vault")
 			}
 		}
 		ka, err := kafkaadmin.NewAdmin(kafkaFlags)
@@ -110,6 +138,7 @@ var restoreCmd = &cobra.Command{
 func init() {
 	restoreCmd.Flags().StringVar(&restoreObjectName, "object-name", "", "Backup JSON file name. The configured backup prefix is applied automatically unless this already includes it")
 	restoreCmd.Flags().BoolVar(&restoreValidateOnly, "validate", false, "Validate that all backup users have Vault passwords without executing restore")
+	restoreCmd.Flags().BoolVar(&restoreForcePasswordCreation, "force-password-creation", false, "Generate random passwords and create missing OCI Vault secrets during restore")
 	restoreCmd.Flags().Bool("interactive", true, "Prompt for missing required values and confirmation")
 	rootCmd.AddCommand(restoreCmd)
 }

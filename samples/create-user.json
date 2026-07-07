@@ -1,0 +1,6 @@
+{
+  "username": "app-user-kguard-test",
+  "password": "sup3rNMastOll!",
+  "mechanism": "SCRAM-SHA-512",
+  "iterations": 4096
+}

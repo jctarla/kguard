@@ -23,9 +23,9 @@ var userCmd = &cobra.Command{
 }
 
 var userCreateCmd = &cobra.Command{
-	Use:           "create <name>",
+	Use:           "create [name]",
 	Short:         "Create a Kafka SCRAM user and store its password in OCI Vault",
-	Args:          cobra.ExactArgs(1),
+	Args:          cobra.MaximumNArgs(1),
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -33,7 +33,10 @@ var userCreateCmd = &cobra.Command{
 		if err := hydrateKafkaAndVaultCreateSecret(interactive); err != nil {
 			return err
 		}
-		name := args[0]
+		name, err := userNameFromArgsOrJSON(args)
+		if err != nil {
+			return err
+		}
 		password := userCreatePassword
 		if password == "" && interactive {
 			var err error
@@ -79,9 +82,9 @@ var userCreateCmd = &cobra.Command{
 }
 
 var userDeleteCmd = &cobra.Command{
-	Use:           "delete <name>",
+	Use:           "delete [name]",
 	Short:         "Delete a Kafka SCRAM user and schedule deletion of its OCI Vault secret",
-	Args:          cobra.ExactArgs(1),
+	Args:          cobra.MaximumNArgs(1),
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -89,7 +92,10 @@ var userDeleteCmd = &cobra.Command{
 		if err := hydrateKafkaAndVault(interactive); err != nil {
 			return err
 		}
-		name := args[0]
+		name, err := userNameFromArgsOrJSON(args)
+		if err != nil {
+			return err
+		}
 		printBanner()
 		ctx, cancel := context.WithTimeout(context.Background(), kafkaFlags.Timeout)
 		defer cancel()
@@ -102,12 +108,12 @@ var userDeleteCmd = &cobra.Command{
 			return err
 		}
 		defer ka.Close()
-		fmt.Printf("Deleting Kafka user %s...\n", name)
-		if err := ka.DeleteUser(ctx, name, userScramMechanism); err != nil {
-			return err
-		}
 		fmt.Printf("Scheduling Vault secret deletion %s...\n", name)
 		if err := oci.DeletePasswordSecret(ctx, name); err != nil {
+			return err
+		}
+		fmt.Printf("Deleting Kafka user %s...\n", name)
+		if err := ka.DeleteUser(ctx, name, userScramMechanism); err != nil {
 			return err
 		}
 		fmt.Printf("User deleted: %s secret=%s\n", name, name)
@@ -156,4 +162,16 @@ func init() {
 	userListCmd.Flags().Bool("interactive", true, "Prompt for missing required values")
 	userCmd.AddCommand(userCreateCmd, userDeleteCmd, userListCmd)
 	rootCmd.AddCommand(userCmd)
+}
+
+func userNameFromArgsOrJSON(args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+	for _, key := range []string{"username", "user", "name"} {
+		if value := stringFromJSON(key); value != "" {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("provide the user name as an argument or set username in --from-json")
 }
