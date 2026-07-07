@@ -20,6 +20,7 @@ type OCI struct {
 	Region        string
 	CompartmentID string
 	VaultID       string
+	VaultKeyID    string
 	AuthMode      string
 	Profile       string
 	ConfigPath    string
@@ -52,12 +53,32 @@ func ValidateKafka(c Kafka) error {
 	return nil
 }
 
-func ValidateOCI(c OCI) error {
+func ValidateObjectStorage(c OCI) error {
 	if strings.TrimSpace(c.Namespace) == "" {
 		return errors.New("provide the OCI Object Storage namespace")
 	}
 	if strings.TrimSpace(c.Bucket) == "" {
 		return errors.New("provide the OCI Object Storage bucket")
+	}
+	return nil
+}
+
+func ValidateVault(c OCI) error {
+	if strings.TrimSpace(c.VaultID) == "" {
+		return errors.New("provide the OCI Vault OCID")
+	}
+	if strings.TrimSpace(c.CompartmentID) == "" {
+		return errors.New("provide the OCI compartment OCID")
+	}
+	return nil
+}
+
+func ValidateVaultCreateSecret(c OCI) error {
+	if err := ValidateVault(c); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.VaultKeyID) == "" {
+		return errors.New("provide the OCI Vault master encryption key OCID")
 	}
 	return nil
 }

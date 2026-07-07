@@ -213,6 +213,10 @@ func runConfigWizard(profile string, defaults map[string]string) error {
 	if err != nil {
 		return err
 	}
+	values["VAULT_KEY_OCID"], err = ask("OCI Vault master encryption key OCID", defaultValue(defaults, "VAULT_KEY_OCID", ""), false)
+	if err != nil {
+		return err
+	}
 	values["COMPARTMENT_OCID"], err = ask("OCI Compartment OCID", defaultValue(defaults, "COMPARTMENT_OCID", ""), false)
 	if err != nil {
 		return err
@@ -293,6 +297,9 @@ func confirmOverwriteConfig(path string) (bool, error) {
 
 func selectedConfigProfile() (string, error) {
 	profile := strings.TrimSpace(selectedProfile)
+	if profile == "" && strings.TrimSpace(fromJSONPath) != "" {
+		return "", nil
+	}
 	if profile == "" {
 		return "", fmt.Errorf("provide --profile or create one with `kguard profile create <profile>`")
 	}
@@ -303,14 +310,22 @@ func selectedConfigProfile() (string, error) {
 }
 
 func applyConfigDefaults(profile string) (bool, error) {
-	fileValues, fileExists, err := readConfigFile(profile)
-	if err != nil {
-		return false, err
+	fileValues := map[string]string{}
+	fileExists := false
+	if strings.TrimSpace(profile) != "" {
+		var err error
+		fileValues, fileExists, err = readConfigFile(profile)
+		if err != nil {
+			return false, err
+		}
 	}
 	applyConfigValues(fileValues)
+	if err := applyJSONToFlagSet(rootCmd.PersistentFlags(), fromJSONValuesOrNil()); err != nil {
+		return false, err
+	}
 	bs, _ := rootCmd.PersistentFlags().GetString("bootstrap-servers")
 	kafkaFlags.BootstrapServers = appconfig.SplitCSV(bs)
-	return fileExists, nil
+	return fileExists || strings.TrimSpace(fromJSONPath) != "", nil
 }
 
 func applyConfigValues(values map[string]string) {
@@ -324,6 +339,7 @@ func applyConfigValues(values map[string]string) {
 	setStringVarFromMap(&ociFlags.Region, "region", values, "REGION")
 	setStringVarFromMap(&ociFlags.CompartmentID, "compartment-ocid", values, "COMPARTMENT_OCID")
 	setStringVarFromMap(&ociFlags.VaultID, "vault-ocid", values, "VAULT_OCID")
+	setStringVarFromMap(&ociFlags.VaultKeyID, "vault-key-ocid", values, "VAULT_KEY_OCID")
 	setStringVarFromMap(&ociFlags.AuthMode, "oci-auth-mode", values, "AUTH_MODE")
 	setStringVarFromMap(&ociFlags.Profile, "oci-profile", values, "OCI_PROFILE")
 	setStringVarFromMap(&ociFlags.ConfigPath, "oci-config", values, "OCI_CONFIG")
@@ -331,6 +347,9 @@ func applyConfigValues(values map[string]string) {
 
 func applyProfileObjectName(profile string, flagChanged bool, target *string) error {
 	if flagChanged || *target != "" {
+		return nil
+	}
+	if strings.TrimSpace(profile) == "" {
 		return nil
 	}
 	values, exists, err := readConfigFile(profile)
@@ -359,7 +378,7 @@ func missingConfigError(profile string) error {
 }
 
 func hasConfigFlags() bool {
-	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "backup-prefix", "region", "compartment-ocid", "vault-ocid", "oci-auth-mode", "oci-profile", "oci-config", "timeout"} {
+	for _, name := range []string{"bootstrap-servers", "kafka-user", "kafka-password", "namespace", "bucket", "backup-prefix", "region", "compartment-ocid", "vault-ocid", "vault-key-ocid", "oci-auth-mode", "oci-profile", "oci-config", "timeout"} {
 		if rootCmd.PersistentFlags().Changed(name) {
 			return true
 		}
@@ -554,6 +573,7 @@ func configKeys() []string {
 		"REGION",
 		"OBJECT_NAME",
 		"VAULT_OCID",
+		"VAULT_KEY_OCID",
 		"COMPARTMENT_OCID",
 		"TIMEOUT",
 		"AUTH_MODE",

@@ -65,9 +65,11 @@ Run restore:
 - Kafka cluster using `SASL_SSL` with `SCRAM-SHA-512`.
 - OCI Object Storage bucket.
 - For restore, an OCI Vault secret for each Kafka user. The secret name must exactly match the Kafka username.
+- For creating users with `kguard user create`, the OCI Vault master encryption key OCID used to encrypt new secrets.
 - OCI authentication configured with one of:
-  - local `~/.oci/config`; or
-  - Instance Principal when running on an OCI instance.
+  - local `~/.oci/config`;
+  - Instance Principal when running on an OCI instance; or
+  - Cloud Shell with `OCI_CLI_AUTH=instance_obo_user`.
 
 ## Install
 
@@ -115,6 +117,16 @@ To build Linux binaries from another system:
 GOOS=linux ./scripts/build-x64.sh
 GOOS=linux ./scripts/build-arm.sh
 ```
+
+## Smoke Test
+
+For a real integration test against a non-production Kafka/OCI environment, create the `profile-teste` profile first and run:
+
+```bash
+./scripts/smoke-test.sh
+```
+
+By default, the script uses the matching binary from `./dist`, such as `./dist/kguard-darwin-arm64`. Override with `KGUARD_BIN=/path/to/kguard` if needed. The script runs user, ACL, backup, restore validation, restore, and cleanup operations. It also validates `--from-json` for user and ACL creation. It does not create, update, or delete profiles.
 
 ## Release
 
@@ -187,6 +199,7 @@ If a configuration file already exists, `profile create` asks whether to overwri
 - OCI Object Storage backup prefix. The suggested default is the profile name.
 - OCI region
 - OCI Vault OCID
+- OCI Vault master encryption key OCID
 - OCI compartment OCID
 - OCI auth mode: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`
 - OCI config profile
@@ -205,8 +218,76 @@ Profile files are saved as:
 Configuration precedence is:
 
 ```text
-flags > selected profile
+flags > --from-json file > selected profile
 ```
+
+Example JSON file:
+
+```json
+{
+  "profile": "my-profile-dev",
+  "bootstrap_servers": "broker1:9093,broker2:9093",
+  "kafka_user": "admin",
+  "kafka_password": "admin-password",
+  "namespace": "my-namespace",
+  "bucket": "kafka-acl-backup",
+  "backup_prefix": "gru-cluster",
+  "region": "sa-saopaulo-1",
+  "vault_ocid": "ocid1.vault.oc1...",
+  "vault_key_ocid": "ocid1.key.oc1...",
+  "compartment_ocid": "ocid1.compartment.oc1...",
+  "oci_auth_mode": "OCI_CONFIG"
+}
+```
+
+Use it with:
+
+```bash
+./kguard backup --from-json ./kguard-input.json
+```
+
+JSON fields:
+
+| Variable | Description | Context | Required |
+| --- | --- | --- | --- |
+| `profile` | kguard profile used as the last fallback layer. | All commands that load configuration: `backup`, `restore`, `user`, `acl` | N |
+| `bootstrap_servers` | Comma-separated Kafka bootstrap brokers. | `backup`, `restore`, `user list`, `user create`, `user delete`, `acl list`, `acl create`, `acl delete` | Y for Kafka operations unless provided by flag/profile |
+| `kafka_user` | Kafka admin user used by kguard to authenticate to Kafka. | `backup`, `restore`, `user list`, `user create`, `user delete`, `acl list`, `acl create`, `acl delete` | Y for Kafka operations unless provided by flag/profile |
+| `kafka_password` | Kafka admin password used by kguard to authenticate to Kafka. | `backup`, `restore`, `user list`, `user create`, `user delete`, `acl list`, `acl create`, `acl delete` | Y for Kafka operations unless provided by flag/profile |
+| `timeout` | Kafka/OCI operation timeout, for example `60s` or `1m`. | All commands that connect to Kafka or OCI | N |
+| `namespace` | OCI Object Storage namespace. | `backup`, `restore` | Y for Object Storage operations unless provided by flag/profile |
+| `bucket` | OCI Object Storage bucket used for backups. | `backup`, `restore` | Y for Object Storage operations unless provided by flag/profile |
+| `backup_prefix` | OCI Object Storage prefix used when saving or resolving backup objects. | `backup`, `restore` | N |
+| `region` | OCI region override, for example `sa-saopaulo-1`. | `backup`, `restore`, `user create`, `user delete` | N |
+| `compartment_ocid` | OCI compartment OCID used to list/create Vault secrets. | `restore`, `user create`, `user delete` | Y for Vault operations unless provided by flag/profile |
+| `vault_ocid` | OCI Vault OCID where Kafka user passwords are stored. | `restore`, `user create`, `user delete` | Y for Vault operations unless provided by flag/profile |
+| `vault_key_ocid` | OCI Vault master encryption key OCID used to create new secrets. | `user create` | Y for `user create` unless provided by flag/profile |
+| `oci_auth_mode` | OCI auth mode: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`. | `backup`, `restore`, `user create`, `user delete` | N |
+| `oci_profile` | Profile name inside the OCI config file. | OCI operations using `OCI_CONFIG` | N |
+| `oci_config` | Alternative OCI config file path. | OCI operations using `OCI_CONFIG` | N |
+| `object_name` | Backup object name to upload or restore. | `backup`, `restore` | N for `backup`; Y for non-interactive `restore` unless selecting interactively |
+| `validate` | Restore validation-only mode. | `restore` | N |
+| `password` | Password for the Kafka SCRAM user being created. | `user create` | Y for non-interactive `user create` unless provided by flag |
+| `mechanism` | SCRAM mechanism, usually `SCRAM-SHA-512`. | `user create`, `user delete` | N |
+| `iterations` | SCRAM iteration count. | `user create` | N |
+| `topic` | Kafka topic resource pattern. Accepts a string or list. | `acl list`, `acl create`, `acl delete` | Y for topic ACLs |
+| `group` | Kafka consumer group resource pattern. Accepts a string or list. | `acl list`, `acl create`, `acl delete` | Y for consumer ACLs |
+| `cluster` | Whether to target the Kafka cluster resource. | `acl list`, `acl create`, `acl delete` | N |
+| `transactional_id` | Kafka transactional ID resource pattern. Accepts a string or list. | `acl list`, `acl create`, `acl delete` | N |
+| `delegation_token` | Kafka delegation token resource pattern. Accepts a string or list. | `acl list`, `acl create`, `acl delete` | N |
+| `user_principal` | Kafka user resource pattern. Accepts a string or list. | `acl list`, `acl create`, `acl delete` | N |
+| `resource_pattern_type` | ACL resource pattern type: `literal` or `prefixed`. | `acl list`, `acl create`, `acl delete` | N |
+| `allow_principal` | Principal to allow, for example `User:app-user`. Accepts a string or list. | `acl create`, `acl delete` | Y for allow ACL changes |
+| `deny_principal` | Principal to deny, for example `User:bad-user`. Accepts a string or list. | `acl create`, `acl delete` | Y for deny ACL changes |
+| `allow_host` | Host for allowed principals. Accepts a string or list. Defaults to `*`. | `acl create`, `acl delete` | N |
+| `deny_host` | Host for denied principals. Accepts a string or list. Defaults to `*`. | `acl create`, `acl delete` | N |
+| `operation` | ACL operation such as `Read`, `Write`, `Describe`, or `All`. Accepts a string or list. | `acl create`, `acl delete` | N, defaults to `All` |
+| `producer` | Enables Kafka producer ACL shortcut. | `acl create`, `acl delete` | N |
+| `consumer` | Enables Kafka consumer ACL shortcut. | `acl create`, `acl delete` | N |
+| `idempotent` | Adds idempotent producer ACL on the cluster resource. | `acl create`, `acl delete` | N |
+| `principal` | Principal filter for listing ACLs. Accepts a string or list. | `acl list` | N |
+| `force` | Assumes yes for supported confirmations. | `acl create`, `acl delete` | N |
+| `interactive` | Enables or disables interactive prompts. | `backup`, `restore`, `user`, `acl` | N |
 
 If the selected profile does not exist, kguard asks you to initialize it with:
 
@@ -319,11 +400,97 @@ In interactive mode, restore asks for confirmation with `Y` as the default:
 Apply restore to the target Kafka cluster? (Y/n)
 ```
 
+## Manage Users And ACLs
+
+Create a Kafka SCRAM user and store the password as an OCI Vault secret with the same name:
+
+```bash
+./kguard user create app-user \
+  --profile my-profile-dev \
+  --password "change-me"
+```
+
+If the profile already exists, the JSON can contain only the values specific to the user and ACL operation. Example `create-user.json`:
+
+```json
+{
+  "profile": "my-profile-dev",
+  "password": "change-me",
+  "mechanism": "SCRAM-SHA-512",
+  "iterations": 4096
+}
+```
+
+Create the user with:
+
+```bash
+./kguard user create app-user --from-json ./create-user.json
+```
+
+Example `create-user-acl.json`:
+
+```json
+{
+  "profile": "my-profile-dev",
+  "allow_principal": "User:app-user",
+  "allow_host": "*",
+  "operation": "Read",
+  "topic": "my-topic"
+}
+```
+
+Create the ACL with:
+
+```bash
+./kguard acl create --from-json ./create-user-acl.json
+```
+
+Delete a Kafka SCRAM user and schedule deletion of the matching OCI Vault secret:
+
+```bash
+./kguard user delete app-user --profile my-profile-dev
+```
+
+List Kafka SCRAM users:
+
+```bash
+./kguard user list --profile my-profile-dev
+```
+
+Create, delete, and list ACLs:
+
+```bash
+./kguard acl create \
+  --profile my-profile-dev \
+  --allow-principal User:app-user \
+  --allow-host '*' \
+  --operation Read \
+  --topic my-topic
+
+./kguard acl delete \
+  --profile my-profile-dev \
+  --allow-principal User:app-user \
+  --allow-host '*' \
+  --operation Read \
+  --topic my-topic
+
+./kguard acl list --profile my-profile-dev --topic my-topic
+```
+
+The ACL flags follow the Kafka `kafka-acls.sh` style:
+
+```bash
+./kguard acl create --profile my-profile-dev --allow-principal User:app-user --producer --topic my-topic
+./kguard acl create --profile my-profile-dev --allow-principal User:app-user --consumer --topic my-topic --group my-group
+./kguard acl create --profile my-profile-dev --deny-principal User:bad-user --deny-host 198.51.100.3 --operation Read --topic my-topic
+```
+
 ## Main Flags
 
 - `--bootstrap-servers`: comma-separated Kafka brokers.
 - `--kafka-user`: Kafka admin user.
 - `--kafka-password`: Kafka admin password.
+- `--from-json`: local JSON file used as an intermediate defaults layer between explicit flags and the selected profile.
 - `--profile`: kguard configuration profile name.
 - `--namespace`: OCI Object Storage namespace.
 - `--bucket`: bucket used to save/read backups.
@@ -332,6 +499,7 @@ Apply restore to the target Kafka cluster? (Y/n)
 - `--object-name`: backup JSON file name. The configured backup prefix is applied automatically unless this already includes it.
 - `--validate`: validate Vault secrets for backup users without executing restore.
 - `--vault-ocid`: Vault OCID used during restore.
+- `--vault-key-ocid`: Vault master encryption key OCID used to create new password secrets.
 - `--compartment-ocid`: compartment OCID containing the secrets.
 - `--oci-auth-mode`: OCI authentication mode: `OCI_CONFIG`, `INSTANCE_PRINCIPAL`, or `CLOUD_SHELL`.
 - `--oci-profile`: profile from `~/.oci/config`. Default: `DEFAULT`.

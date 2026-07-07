@@ -17,6 +17,8 @@ var (
 	ociFlags   config.OCI
 )
 
+var fromJSONPath string
+
 var appVersion = "dev"
 
 var rootCmd = &cobra.Command{
@@ -47,6 +49,9 @@ func Execute() {
 func init() {
 	rootCmd.SetVersionTemplate("kguard version {{.Version}}\n")
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		return applyFromJSONDefaults(cmd)
+	}
 	rootCmd.PersistentFlags().String("bootstrap-servers", "", "Comma-separated Kafka bootstrap brokers. Example: b1:9093,b2:9093")
 	rootCmd.PersistentFlags().StringVar(&kafkaFlags.Username, "kafka-user", "", "Kafka admin user for SCRAM-SHA-512 authentication")
 	rootCmd.PersistentFlags().StringVar(&kafkaFlags.Password, "kafka-password", "", "Kafka admin password for SCRAM-SHA-512 authentication")
@@ -57,9 +62,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Region, "region", "", "OCI region override. Example: sa-saopaulo-1")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.CompartmentID, "compartment-ocid", "", "Compartment OCID used to list Vault secrets during restore")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.VaultID, "vault-ocid", "", "Vault OCID where Kafka user passwords are stored")
+	rootCmd.PersistentFlags().StringVar(&ociFlags.VaultKeyID, "vault-key-ocid", "", "Vault master encryption key OCID used to create password secrets")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.AuthMode, "oci-auth-mode", "", "OCI authentication mode: OCI_CONFIG, INSTANCE_PRINCIPAL, or CLOUD_SHELL")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.Profile, "oci-profile", "DEFAULT", "Profile from ~/.oci/config")
 	rootCmd.PersistentFlags().StringVar(&ociFlags.ConfigPath, "oci-config", "", "Alternative OCI config file path")
+	rootCmd.PersistentFlags().StringVar(&fromJSONPath, "from-json", "", "Load default argument values from a local JSON file")
 }
 
 func printBanner() {
@@ -76,6 +83,10 @@ kguard %s - OCI-native Kafka access backup and restore with Vault and Object Sto
 }
 
 func hydrateCommon(interactive bool) error {
+	return hydrateKafkaAndObjectStorage(interactive)
+}
+
+func hydrateKafkaAndObjectStorage(interactive bool) error {
 	_ = interactive
 	profile, err := selectedConfigProfile()
 	if err != nil {
@@ -91,7 +102,7 @@ func hydrateCommon(interactive bool) error {
 	if err := config.ValidateKafka(kafkaFlags); err != nil {
 		return err
 	}
-	if err := config.ValidateOCI(ociFlags); err != nil {
+	if err := config.ValidateObjectStorage(ociFlags); err != nil {
 		return err
 	}
 	applyDefaultBackupPrefix(profile)
@@ -99,6 +110,10 @@ func hydrateCommon(interactive bool) error {
 }
 
 func hydrateOCIOnly(interactive bool) error {
+	return hydrateObjectStorageAndVault(interactive)
+}
+
+func hydrateObjectStorageAndVault(interactive bool) error {
 	_ = interactive
 	profile, err := selectedConfigProfile()
 	if err != nil {
@@ -111,11 +126,53 @@ func hydrateOCIOnly(interactive bool) error {
 	if !hasSource {
 		return missingConfigError(profile)
 	}
-	if err := config.ValidateOCI(ociFlags); err != nil {
+	if err := config.ValidateObjectStorage(ociFlags); err != nil {
 		return err
 	}
 	applyDefaultBackupPrefix(profile)
-	return validateVaultConfig(profile)
+	return config.ValidateVault(ociFlags)
+}
+
+func hydrateKafkaAndVault(interactive bool) error {
+	_ = interactive
+	profile, err := selectedConfigProfile()
+	if err != nil {
+		return err
+	}
+	hasSource, err := applyConfigDefaults(profile)
+	if err != nil {
+		return err
+	}
+	if !hasSource {
+		return missingConfigError(profile)
+	}
+	if err := config.ValidateKafka(kafkaFlags); err != nil {
+		return err
+	}
+	return config.ValidateVault(ociFlags)
+}
+
+func hydrateKafkaAndVaultCreateSecret(interactive bool) error {
+	if err := hydrateKafkaAndVault(interactive); err != nil {
+		return err
+	}
+	return config.ValidateVaultCreateSecret(ociFlags)
+}
+
+func hydrateKafkaOnly(interactive bool) error {
+	_ = interactive
+	profile, err := selectedConfigProfile()
+	if err != nil {
+		return err
+	}
+	hasSource, err := applyConfigDefaults(profile)
+	if err != nil {
+		return err
+	}
+	if !hasSource {
+		return missingConfigError(profile)
+	}
+	return config.ValidateKafka(kafkaFlags)
 }
 
 func applyDefaultBackupPrefix(profile string) {

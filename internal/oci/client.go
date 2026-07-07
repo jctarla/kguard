@@ -44,9 +44,6 @@ type BackupObject struct {
 }
 
 func NewClient(cfg config.OCI) (*Client, error) {
-	if err := config.ValidateOCI(cfg); err != nil {
-		return nil, err
-	}
 	provider, err := provider(cfg)
 	if err != nil {
 		return nil, err
@@ -67,6 +64,9 @@ func NewClient(cfg config.OCI) (*Client, error) {
 }
 
 func (c *Client) UploadBackup(ctx context.Context, name string, b *backup.File) (string, error) {
+	if err := config.ValidateObjectStorage(c.cfg); err != nil {
+		return "", err
+	}
 	body, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("serializar backup: %w", err)
@@ -98,6 +98,9 @@ func (c *Client) DownloadBackupExact(ctx context.Context, name string) (*backup.
 }
 
 func (c *Client) downloadBackupObject(ctx context.Context, name string) (*backup.File, error) {
+	if err := config.ValidateObjectStorage(c.cfg); err != nil {
+		return nil, err
+	}
 	resp, err := c.object.GetObject(ctx, objectstorage.GetObjectRequest{
 		NamespaceName: common.String(c.cfg.Namespace),
 		BucketName:    common.String(c.cfg.Bucket),
@@ -115,6 +118,9 @@ func (c *Client) downloadBackupObject(ctx context.Context, name string) (*backup
 }
 
 func (c *Client) ListBackupPrefixes(ctx context.Context) ([]string, error) {
+	if err := config.ValidateObjectStorage(c.cfg); err != nil {
+		return nil, err
+	}
 	seen := map[string]struct{}{}
 	var start *string
 	for {
@@ -149,6 +155,9 @@ func (c *Client) ListBackupPrefixes(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) ListBackupsInPrefix(ctx context.Context, prefix string) ([]BackupObject, error) {
+	if err := config.ValidateObjectStorage(c.cfg); err != nil {
+		return nil, err
+	}
 	selectedPrefix := strings.Trim(strings.TrimSpace(prefix), "/")
 	listPrefix := selectedPrefix
 	if listPrefix != "" {
@@ -247,6 +256,58 @@ func (c *Client) ValidatePasswords(ctx context.Context, users []backup.User) ([]
 
 func (c *Client) ValidateAndLoadPasswords(ctx context.Context, users []backup.User) ([]PasswordValidation, map[string]string, error) {
 	return c.validatePasswords(ctx, users, true)
+}
+
+func (c *Client) SecretExists(ctx context.Context, name string) (bool, error) {
+	secretsByName, err := c.listSecrets(ctx)
+	if err != nil {
+		return false, err
+	}
+	return secretsByName[name] != "", nil
+}
+
+func (c *Client) CreatePasswordSecret(ctx context.Context, name, password string) error {
+	if err := config.ValidateVaultCreateSecret(c.cfg); err != nil {
+		return err
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(password))
+	_, err := c.vault.CreateSecret(ctx, vault.CreateSecretRequest{
+		CreateSecretDetails: vault.CreateSecretDetails{
+			CompartmentId: common.String(c.cfg.CompartmentID),
+			KeyId:         common.String(c.cfg.VaultKeyID),
+			SecretName:    common.String(name),
+			VaultId:       common.String(c.cfg.VaultID),
+			Description:   common.String("Kafka SCRAM password managed by kguard"),
+			SecretContent: vault.Base64SecretContentDetails{
+				Name:    common.String(name),
+				Content: common.String(encoded),
+				Stage:   vault.SecretContentDetailsStageCurrent,
+			},
+			FreeformTags: map[string]string{"created-by": "kguard", "kafka-user": name},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create Vault secret %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) DeletePasswordSecret(ctx context.Context, name string) error {
+	secretsByName, err := c.listSecrets(ctx)
+	if err != nil {
+		return err
+	}
+	secretID := secretsByName[name]
+	if secretID == "" {
+		return fmt.Errorf("secret %q was not found in the configured Vault", name)
+	}
+	_, err = c.vault.ScheduleSecretDeletion(ctx, vault.ScheduleSecretDeletionRequest{
+		SecretId: common.String(secretID),
+	})
+	if err != nil {
+		return fmt.Errorf("schedule Vault secret deletion %q: %w", name, err)
+	}
+	return nil
 }
 
 func (c *Client) validatePasswords(ctx context.Context, users []backup.User, keepPasswords bool) ([]PasswordValidation, map[string]string, error) {

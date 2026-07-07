@@ -64,6 +64,115 @@ func (a *Admin) Backup(ctx context.Context, servers []string) (*backup.File, err
 	}, nil
 }
 
+func (a *Admin) ListUsers(ctx context.Context) ([]backup.User, error) {
+	return a.describeUsers(ctx)
+}
+
+func (a *Admin) CreateUser(ctx context.Context, name, password, mechanism string, iterations int32) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("user name is required")
+	}
+	if password == "" {
+		return fmt.Errorf("password is required")
+	}
+	mech, err := scramMechanismID(mechanism)
+	if err != nil {
+		return err
+	}
+	if iterations == 0 {
+		iterations = 4096
+	}
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("generate SCRAM salt for %q: %w", name, err)
+	}
+	req := kmsg.NewAlterUserSCRAMCredentialsRequest()
+	req.Upsertions = append(req.Upsertions, kmsg.AlterUserSCRAMCredentialsRequestUpsertion{
+		Name:           name,
+		Mechanism:      mech,
+		Iterations:     iterations,
+		Salt:           salt,
+		SaltedPassword: saltedPassword(mechanism, password, salt, iterations),
+	})
+	resp, err := req.RequestWith(ctx, a.client)
+	if err != nil {
+		return fmt.Errorf("create SCRAM user %q: %w", name, err)
+	}
+	for _, r := range resp.Results {
+		if r.ErrorCode != 0 {
+			return fmt.Errorf("create SCRAM user %q: kafka error code %d: %s", r.User, r.ErrorCode, msg(r.ErrorMessage))
+		}
+	}
+	return nil
+}
+
+func (a *Admin) DeleteUser(ctx context.Context, name, mechanism string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("user name is required")
+	}
+	mech, err := scramMechanismID(mechanism)
+	if err != nil {
+		return err
+	}
+	req := kmsg.NewAlterUserSCRAMCredentialsRequest()
+	req.Deletions = append(req.Deletions, kmsg.AlterUserSCRAMCredentialsRequestDeletion{
+		Name:      name,
+		Mechanism: mech,
+	})
+	resp, err := req.RequestWith(ctx, a.client)
+	if err != nil {
+		return fmt.Errorf("delete SCRAM user %q: %w", name, err)
+	}
+	for _, r := range resp.Results {
+		if r.ErrorCode != 0 {
+			return fmt.Errorf("delete SCRAM user %q: kafka error code %d: %s", r.User, r.ErrorCode, msg(r.ErrorMessage))
+		}
+	}
+	return nil
+}
+
+func (a *Admin) ListACLs(ctx context.Context) ([]backup.ACL, error) {
+	return a.describeACLs(ctx)
+}
+
+func (a *Admin) CreateACL(ctx context.Context, acl backup.ACL) error {
+	req := kmsg.NewCreateACLsRequest()
+	creation, err := aclCreation(acl)
+	if err != nil {
+		return err
+	}
+	req.Creations = append(req.Creations, creation)
+	resp, err := req.RequestWith(ctx, a.client)
+	if err != nil {
+		return fmt.Errorf("create ACL: %w", err)
+	}
+	for i, r := range resp.Results {
+		if r.ErrorCode != 0 {
+			return fmt.Errorf("create ACL %d: kafka error code %d: %s", i+1, r.ErrorCode, msg(r.ErrorMessage))
+		}
+	}
+	return nil
+}
+
+func (a *Admin) DeleteACL(ctx context.Context, acl backup.ACL) error {
+	filter, err := aclDeleteFilter(acl)
+	if err != nil {
+		return err
+	}
+	req := kmsg.NewDeleteACLsRequest()
+	req.Filters = append(req.Filters, filter)
+	resp, err := req.RequestWith(ctx, a.client)
+	if err != nil {
+		return fmt.Errorf("delete ACL: %w", err)
+	}
+	for i, r := range resp.Results {
+		if r.ErrorCode != 0 {
+			return fmt.Errorf("delete ACL %d: kafka error code %d: %s", i+1, r.ErrorCode, msg(r.ErrorMessage))
+		}
+	}
+	return nil
+}
+
 func (a *Admin) Restore(ctx context.Context, b *backup.File, passwords map[string]string) error {
 	if b.Version == "" {
 		return fmt.Errorf("backup has no version")
@@ -183,31 +292,11 @@ func (a *Admin) restoreACLs(ctx context.Context, acls []backup.ACL) error {
 	}
 	req := kmsg.NewCreateACLsRequest()
 	for _, acl := range acls {
-		rt, err := aclResourceType(acl.ResourceType)
+		creation, err := aclCreation(acl)
 		if err != nil {
 			return err
 		}
-		pt, err := aclPatternType(acl.ResourcePatternType)
-		if err != nil {
-			return err
-		}
-		op, err := aclOperation(acl.Operation)
-		if err != nil {
-			return err
-		}
-		perm, err := aclPermission(acl.PermissionType)
-		if err != nil {
-			return err
-		}
-		req.Creations = append(req.Creations, kmsg.CreateACLsRequestCreation{
-			ResourceType:        rt,
-			ResourceName:        acl.ResourceName,
-			ResourcePatternType: pt,
-			Principal:           acl.Principal,
-			Host:                acl.Host,
-			Operation:           op,
-			PermissionType:      perm,
-		})
+		req.Creations = append(req.Creations, creation)
 	}
 	if len(req.Creations) == 0 {
 		return nil
@@ -222,6 +311,64 @@ func (a *Admin) restoreACLs(ctx context.Context, acls []backup.ACL) error {
 		}
 	}
 	return nil
+}
+
+func aclCreation(acl backup.ACL) (kmsg.CreateACLsRequestCreation, error) {
+	rt, err := aclResourceType(acl.ResourceType)
+	if err != nil {
+		return kmsg.CreateACLsRequestCreation{}, err
+	}
+	pt, err := aclPatternType(acl.ResourcePatternType)
+	if err != nil {
+		return kmsg.CreateACLsRequestCreation{}, err
+	}
+	op, err := aclOperation(acl.Operation)
+	if err != nil {
+		return kmsg.CreateACLsRequestCreation{}, err
+	}
+	perm, err := aclPermission(acl.PermissionType)
+	if err != nil {
+		return kmsg.CreateACLsRequestCreation{}, err
+	}
+	return kmsg.CreateACLsRequestCreation{
+		ResourceType:        rt,
+		ResourceName:        acl.ResourceName,
+		ResourcePatternType: pt,
+		Principal:           acl.Principal,
+		Host:                acl.Host,
+		Operation:           op,
+		PermissionType:      perm,
+	}, nil
+}
+
+func aclDeleteFilter(acl backup.ACL) (kmsg.DeleteACLsRequestFilter, error) {
+	rt, err := aclResourceType(acl.ResourceType)
+	if err != nil {
+		return kmsg.DeleteACLsRequestFilter{}, err
+	}
+	pt, err := aclPatternType(acl.ResourcePatternType)
+	if err != nil {
+		return kmsg.DeleteACLsRequestFilter{}, err
+	}
+	op, err := aclOperation(acl.Operation)
+	if err != nil {
+		return kmsg.DeleteACLsRequestFilter{}, err
+	}
+	perm, err := aclPermission(acl.PermissionType)
+	if err != nil {
+		return kmsg.DeleteACLsRequestFilter{}, err
+	}
+	principal := acl.Principal
+	host := acl.Host
+	return kmsg.DeleteACLsRequestFilter{
+		ResourceType:        rt,
+		ResourceName:        &acl.ResourceName,
+		ResourcePatternType: pt,
+		Principal:           &principal,
+		Host:                &host,
+		Operation:           op,
+		PermissionType:      perm,
+	}, nil
 }
 
 func (a *Admin) deleteExistingACLsForBackupPrincipals(ctx context.Context, acls []backup.ACL) error {

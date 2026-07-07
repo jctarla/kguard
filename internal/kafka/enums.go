@@ -33,24 +33,26 @@ func scramMechanismID(v string) (int8, error) {
 }
 
 func aclResourceType(v string) (kmsg.ACLResourceType, error) {
-	switch strings.ToUpper(v) {
+	switch normalizeACLEnum(v) {
 	case "TOPIC":
 		return kmsg.ACLResourceTypeTopic, nil
 	case "GROUP":
 		return kmsg.ACLResourceTypeGroup, nil
 	case "CLUSTER":
 		return kmsg.ACLResourceTypeCluster, nil
-	case "TRANSACTIONAL_ID":
+	case "TRANSACTIONALID":
 		return kmsg.ACLResourceTypeTransactionalId, nil
-	case "DELEGATION_TOKEN":
+	case "DELEGATIONTOKEN":
 		return kmsg.ACLResourceTypeDelegationToken, nil
+	case "USER":
+		return kmsg.ACLResourceTypeUser, nil
 	default:
 		return 0, fmt.Errorf("invalid resource_type: %s", v)
 	}
 }
 
 func aclPatternType(v string) (kmsg.ACLResourcePatternType, error) {
-	switch strings.ToUpper(v) {
+	switch normalizeACLEnum(v) {
 	case "LITERAL":
 		return kmsg.ACLResourcePatternTypeLiteral, nil
 	case "PREFIXED":
@@ -61,7 +63,7 @@ func aclPatternType(v string) (kmsg.ACLResourcePatternType, error) {
 }
 
 func aclOperation(v string) (kmsg.ACLOperation, error) {
-	switch strings.ToUpper(v) {
+	switch normalizeACLEnum(v) {
 	case "READ":
 		return kmsg.ACLOperationRead, nil
 	case "WRITE":
@@ -74,17 +76,17 @@ func aclOperation(v string) (kmsg.ACLOperation, error) {
 		return kmsg.ACLOperationAlter, nil
 	case "DESCRIBE":
 		return kmsg.ACLOperationDescribe, nil
-	case "CLUSTER_ACTION":
+	case "CLUSTERACTION":
 		return kmsg.ACLOperationClusterAction, nil
-	case "DESCRIBE_CONFIGS":
+	case "DESCRIBECONFIGS":
 		return kmsg.ACLOperationDescribeConfigs, nil
-	case "ALTER_CONFIGS":
+	case "ALTERCONFIGS":
 		return kmsg.ACLOperationAlterConfigs, nil
-	case "IDEMPOTENT_WRITE":
+	case "IDEMPOTENTWRITE":
 		return kmsg.ACLOperationIdempotentWrite, nil
-	case "CREATE_TOKENS":
+	case "CREATETOKENS":
 		return kmsg.ACLOperationCreateTokens, nil
-	case "DESCRIBE_TOKENS":
+	case "DESCRIBETOKENS":
 		return kmsg.ACLOperationDescribeTokens, nil
 	case "ALL":
 		return kmsg.ACLOperationAll, nil
@@ -94,7 +96,7 @@ func aclOperation(v string) (kmsg.ACLOperation, error) {
 }
 
 func aclPermission(v string) (kmsg.ACLPermissionType, error) {
-	switch strings.ToUpper(v) {
+	switch normalizeACLEnum(v) {
 	case "ALLOW":
 		return kmsg.ACLPermissionTypeAllow, nil
 	case "DENY":
@@ -102,4 +104,11 @@ func aclPermission(v string) (kmsg.ACLPermissionType, error) {
 	default:
 		return 0, fmt.Errorf("invalid permission_type: %s", v)
 	}
+}
+
+func normalizeACLEnum(v string) string {
+	v = strings.ToUpper(strings.TrimSpace(v))
+	v = strings.ReplaceAll(v, "_", "")
+	v = strings.ReplaceAll(v, "-", "")
+	return v
 }

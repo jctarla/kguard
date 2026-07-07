@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"kguard/internal/backup"
+	"kguard/internal/config"
 	kafkaadmin "kguard/internal/kafka"
 	ociclient "kguard/internal/oci"
 
@@ -42,7 +43,7 @@ var restoreCmd = &cobra.Command{
 			if err := hydrateCommon(interactive); err != nil {
 				return err
 			}
-			if err := validateVaultConfig(profile); err != nil {
+			if err := config.ValidateVault(ociFlags); err != nil {
 				return err
 			}
 		}
