@@ -1,10 +1,10 @@
 # kguard
 
-Go CLI to back up and restore Kafka SCRAM users and ACLs, storing backups in OCI Object Storage.
+OCI-native access backup and restore for OCI Streaming with Apache Kafka.
 
 ## Objectives
 
-kguard helps Kafka administrators protect access configuration by backing up SCRAM users and ACLs into OCI Object Storage and restoring them when needed. Use it for disaster recovery, cluster migration, access auditing, or controlled replication of Kafka security settings across environments.
+kguard helps **OCI Streaming with Apache Kafka** administrators protect access configuration by backing up SCRAM users and ACLs into OCI Object Storage and restoring them with passwords retrieved from OCI Vault. Use it for OCI-native disaster recovery, cluster migration, access auditing, or controlled replication of Kafka security settings across OCI environments.
 
 Backups do not store user passwords. During restore, kguard retrieves each user's password from OCI Vault, using secrets named after the Kafka usernames.
 

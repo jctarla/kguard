@@ -79,7 +79,7 @@ func printBanner() {
 |_|\_\__, |\__,_|\__, |_|  \__,_|
      |___/       |___/
 
-kguard %s - OCI-native Kafka access backup and restore with Vault and Object Storage
+kguard %s - OCI-native access backup and restore for OCI Streaming with Apache Kafka
 `, appVersion)
 	fmt.Println()
 }
